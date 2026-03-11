@@ -18,6 +18,7 @@ to estimate causal effects, scored by proper scoring rules.
 - Never modify prepare.py, scoring.py, or runner.py during experiments
 - Use functional programming style — pure functions, no classes (except PyMC context)
 - Do not catch generic exceptions
+- Use type hints on all function signatures (parameters and return types)
 
 ## Running an experiment
 ```bash

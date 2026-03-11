@@ -6,10 +6,12 @@ run_experiment() with a custom load_data function.
 """
 import importlib.util
 import signal
+import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from types import ModuleType
+from typing import Any, Callable, Optional
 
 import arviz as az
 import numpy as np
@@ -20,15 +22,17 @@ from sklearn.model_selection import train_test_split
 
 from scoring import (
     check_convergence,
+    compare_elpd,
     compute_ate_bias,
+    compute_ate_hdi_width,
     compute_crps,
-    compute_elpd,
+    compute_elpd_with_se,
     compute_mae,
     compute_rmse,
 )
 
 
-def parse_problem_config(problem_md_path: Path) -> dict:
+def parse_problem_config(problem_md_path: Path) -> dict[str, Any]:
     """Parse YAML frontmatter from problem.md.
     Expects file to start with '---', YAML content, then '---'.
     """
@@ -44,8 +48,20 @@ def split_data_random(
     treatment_col: str,
     ratios: list[float],
     seed: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split data randomly, stratified by treatment variable."""
+) -> tuple[pd.DataFrame, ...]:
+    """Split data randomly, stratified by treatment variable.
+    Supports 2-element [train, test] or 3-element [train, val, test] ratios.
+    """
+    if len(ratios) == 2:
+        train_ratio, _test_ratio = ratios
+        train_df, test_df = train_test_split(
+            df, train_size=train_ratio, stratify=df[treatment_col], random_state=seed
+        )
+        return (
+            train_df.reset_index(drop=True),
+            test_df.reset_index(drop=True),
+        )
+
     train_ratio, val_ratio, _test_ratio = ratios
     train_df, temp_df = train_test_split(
         df, train_size=train_ratio, stratify=df[treatment_col], random_state=seed
@@ -66,10 +82,20 @@ def split_data_temporal(
     df: pd.DataFrame,
     temporal_col: str,
     ratios: list[float],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split data chronologically by temporal column."""
+) -> tuple[pd.DataFrame, ...]:
+    """Split data chronologically by temporal column.
+    Supports 2-element [train, test] or 3-element [train, val, test] ratios.
+    """
     df_sorted = df.sort_values(temporal_col).reset_index(drop=True)
     n = len(df_sorted)
+
+    if len(ratios) == 2:
+        train_end = int(n * ratios[0])
+        return (
+            df_sorted.iloc[:train_end].reset_index(drop=True),
+            df_sorted.iloc[train_end:].reset_index(drop=True),
+        )
+
     train_end = int(n * ratios[0])
     val_end = int(n * (ratios[0] + ratios[1]))
     return (
@@ -84,7 +110,7 @@ def make_data_dict(
     treatment_col: str,
     outcome_col: str,
     confounder_cols: list[str],
-) -> dict:
+) -> dict[str, Any]:
     """Convert a DataFrame into the dict format expected by model.py."""
     X = df[confounder_cols].values.astype(np.float64)
     treatment = df[treatment_col].values.astype(np.float64)
@@ -96,7 +122,7 @@ def make_data_dict(
     return {"X": X, "treatment": treatment, "outcome": outcome, "coords": coords}
 
 
-def import_model_module(model_path: Path):
+def import_model_module(model_path: Path) -> ModuleType:
     """Dynamically import model.py from a problem directory."""
     spec = importlib.util.spec_from_file_location("model", model_path)
     module = importlib.util.module_from_spec(spec)
@@ -109,7 +135,7 @@ class SamplingTimeout(Exception):
     pass
 
 
-def _timeout_handler(signum, frame):
+def _timeout_handler(signum: int, frame: Any) -> None:
     raise SamplingTimeout("Sampling exceeded time budget")
 
 
@@ -138,7 +164,7 @@ def sample_model(
     return idata
 
 
-def _format_line(key: str, val) -> str:
+def _format_line(key: str, val: object) -> str:
     """Format a single key-value line with consistent alignment."""
     label = f"{key}:"
     if isinstance(val, bool):
@@ -151,11 +177,12 @@ def _format_line(key: str, val) -> str:
 
 
 def print_results(
-    scores: dict,
-    convergence: dict,
-    causal: dict,
-    timing: dict,
+    scores: dict[str, object],
+    convergence: dict[str, object],
+    causal: dict[str, object],
+    timing: dict[str, float],
     n_params: int = 0,
+    comparison: Optional[dict[str, float | str]] = None,
 ) -> None:
     """Print standardized results block for log parsing."""
     print("---")
@@ -172,11 +199,14 @@ def print_results(
     for key, val in causal.items():
         if val is not None and not isinstance(val, np.ndarray):
             print(_format_line(key, val))
+    if comparison is not None:
+        for key, val in comparison.items():
+            print(_format_line(key, val))
 
 
 def run_experiment(
     problem_dir: Path,
-    load_data_fn: Callable[[], tuple[pd.DataFrame, dict]],
+    load_data_fn: Callable[[], tuple[pd.DataFrame, dict[str, Any]]],
 ) -> None:
     """Run a single Bayesian modeling experiment.
 
@@ -191,7 +221,7 @@ def run_experiment(
     # 1. Parse config
     config = parse_problem_config(problem_dir / "problem.md")
     split_strategy = config.get("split_strategy", "random")
-    split_ratios = config.get("split_ratios", [0.6, 0.2, 0.2])
+    split_ratios = config.get("split_ratios", [0.8, 0.2])
     time_budget = config.get("time_budget", 300)
 
     # 2. Load data
@@ -201,16 +231,19 @@ def run_experiment(
     confounder_cols = metadata["confounder_cols"]
     true_ate = metadata.get("true_ate")
 
-    # 3. Split
+    # 3. Split into train/test (2-way)
     if split_strategy == "temporal":
         temporal_col = config["temporal_column"]
-        train_df, val_df, test_df = split_data_temporal(df, temporal_col, split_ratios)
+        splits = split_data_temporal(df, temporal_col, split_ratios)
     else:
-        train_df, val_df, test_df = split_data_random(df, treatment_col, split_ratios)
+        splits = split_data_random(df, treatment_col, split_ratios)
+
+    train_df = splits[0]
+    test_df = splits[-1]
 
     # 4. Make data dicts
     train_data = make_data_dict(train_df, treatment_col, outcome_col, confounder_cols)
-    val_data = make_data_dict(val_df, treatment_col, outcome_col, confounder_cols)
+    test_data = make_data_dict(test_df, treatment_col, outcome_col, confounder_cols)
 
     # 5. Import and build model
     model_module = import_model_module(problem_dir / "model.py")
@@ -230,28 +263,62 @@ def run_experiment(
     # 7. Convergence gate
     convergence = check_convergence(idata)
 
-    scores = {}
-    causal = {}
+    scores: dict[str, object] = {}
+    causal: dict[str, object] = {}
+    comparison_result: Optional[dict[str, float | str]] = None
 
     if convergence["ok"]:
-        # 8. Score on validation set
-        val_pred = model_module.predict(idata, pm_model, val_data)
-        scores["val_crps"] = compute_crps(val_data["outcome"], val_pred)
-        scores["val_mae"] = compute_mae(val_data["outcome"], np.mean(val_pred, axis=0))
-        scores["val_rmse"] = compute_rmse(val_data["outcome"], np.mean(val_pred, axis=0))
-        scores["val_elpd"] = compute_elpd(idata)
+        # 8. Primary: ELPD on training data (via PSIS-LOO)
+        elpd, elpd_se = compute_elpd_with_se(idata)
+        scores["elpd"] = elpd
+        scores["elpd_se"] = elpd_se
 
-        # 9. Causal effects
+        # 9. Secondary: CRPS/MAE on test set (diagnostic only)
+        test_pred = model_module.predict(idata, pm_model, test_data)
+        scores["test_crps"] = compute_crps(test_data["outcome"], test_pred)
+        scores["test_mae"] = compute_mae(test_data["outcome"], np.mean(test_pred, axis=0))
+
+        # 10. Causal effects
         causal_result = model_module.estimate_causal_effect(idata, pm_model, train_data)
+        ate_hdi_width: Optional[float] = None
         if causal_result:
             causal["ate_estimate"] = causal_result.get("ate")
             ate_samples = causal_result.get("ate_samples")
             if ate_samples is not None:
+                ate_hdi_width = compute_ate_hdi_width(ate_samples)
+                causal["ate_hdi_width"] = ate_hdi_width
                 causal["ate_hdi_3"] = float(np.percentile(ate_samples, 3))
                 causal["ate_hdi_97"] = float(np.percentile(ate_samples, 97))
             if true_ate is not None:
-                scores["val_ate_bias"] = compute_ate_bias(causal_result["ate"], true_ate)
+                scores["ate_bias"] = compute_ate_bias(causal_result["ate"], true_ate)
+
+        # 11. Compare with best model if exists
+        best_path = runs_dir / "best.nc"
+        if best_path.exists():
+            idata_best = az.from_netcdf(str(best_path))
+            comparison_result = compare_elpd(idata, idata_best)
+            comparison_result_str = comparison_result["result"]
+
+            # Decide: keep or discard
+            keep = False
+            if comparison_result_str == "better":
+                keep = True
+            elif comparison_result_str == "equivalent" and ate_hdi_width is not None:
+                # Tiebreaker: narrower ATE HDI wins
+                best_causal = model_module.estimate_causal_effect(
+                    idata_best, pm_model, train_data
+                )
+                if best_causal and best_causal.get("ate_samples") is not None:
+                    best_hdi_width = compute_ate_hdi_width(best_causal["ate_samples"])
+                    if ate_hdi_width < best_hdi_width:
+                        keep = True
+
+            if keep:
+                shutil.copy2(str(runs_dir / "latest.nc"), str(best_path))
+        else:
+            # First converged run: always keep
+            shutil.copy2(str(runs_dir / "latest.nc"), str(best_path))
 
     total_seconds = time.time() - t_start
     timing = {"sampling_seconds": sampling_seconds, "total_seconds": total_seconds}
-    print_results(scores, convergence, causal, timing, n_params=n_params)
+    print_results(scores, convergence, causal, timing, n_params=n_params, comparison=comparison_result)

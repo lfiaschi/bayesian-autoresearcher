@@ -37,7 +37,7 @@ def compute_ate_bias(estimated_ate: float, true_ate: Optional[float]) -> Optiona
     return float(abs(estimated_ate - true_ate))
 
 
-def check_convergence(idata: az.InferenceData) -> dict:
+def check_convergence(idata: az.InferenceData) -> dict[str, object]:
     """Check MCMC convergence diagnostics.
     Returns dict with: ok, r_hat_max, ess_min, divergences.
     """
@@ -73,3 +73,40 @@ def compute_elpd(idata: az.InferenceData) -> Optional[float]:
         return None
     loo = az.loo(idata, pointwise=False)
     return float(loo.elpd_loo)
+
+
+def compute_elpd_with_se(idata: az.InferenceData) -> tuple[Optional[float], Optional[float]]:
+    """Compute ELPD and its standard error via PSIS-LOO."""
+    if not hasattr(idata, "log_likelihood"):
+        return None, None
+    loo = az.loo(idata, pointwise=False)
+    return float(loo.elpd_loo), float(loo.se)
+
+
+def compare_elpd(idata_new: az.InferenceData, idata_best: az.InferenceData) -> dict[str, float | str]:
+    """Compare two models via ELPD. Returns {delpd, dse, result}.
+    result: 'better' (dELPD > 2*dSE), 'equivalent' (|dELPD| < dSE), 'worse'.
+    Positive delpd = new model is better.
+    """
+    comparison = az.compare({"new": idata_new, "best": idata_best})
+    if comparison.index[0] == "new":
+        delpd = float(comparison.loc["best", "elpd_diff"])
+        dse = float(comparison.loc["best", "dse"])
+    else:
+        delpd = -float(comparison.loc["new", "elpd_diff"])
+        dse = float(comparison.loc["new", "dse"])
+
+    if dse > 0 and delpd > 2 * dse:
+        result = "better"
+    elif dse > 0 and delpd < -2 * dse:
+        result = "worse"
+    else:
+        result = "equivalent"
+    return {"delpd": delpd, "dse": dse, "result": result}
+
+
+def compute_ate_hdi_width(ate_samples: np.ndarray, hdi_prob: float = 0.94) -> float:
+    """Compute width of the ATE HDI interval."""
+    low = np.percentile(ate_samples, (1 - hdi_prob) / 2 * 100)
+    high = np.percentile(ate_samples, (1 + hdi_prob) / 2 * 100)
+    return float(high - low)

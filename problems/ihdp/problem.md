@@ -1,8 +1,8 @@
 ---
-primary_metric: crps
-secondary_metrics: [elpd, mae, ate_bias]
+primary_metric: elpd
+secondary_metrics: [crps, mae, ate_bias]
 split_strategy: random
-split_ratios: [0.6, 0.2, 0.2]
+split_ratios: [0.8, 0.2]
 temporal_column: null
 time_budget: 300
 ---

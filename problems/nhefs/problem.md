@@ -1,8 +1,8 @@
 ---
-primary_metric: crps
-secondary_metrics: [elpd, mae]
+primary_metric: elpd
+secondary_metrics: [crps, mae]
 split_strategy: temporal
-split_ratios: [0.6, 0.2, 0.2]
+split_ratios: [0.8, 0.2]
 temporal_column: age
 time_budget: 300
 ---

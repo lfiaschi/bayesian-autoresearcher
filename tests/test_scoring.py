@@ -8,6 +8,8 @@ from scoring import (
     check_convergence,
     compute_ate_bias,
     compute_elpd,
+    compute_elpd_with_se,
+    compute_ate_hdi_width,
 )
 
 
@@ -73,6 +75,25 @@ def test_elpd_returns_none_without_log_likelihood():
     data = {"mu": rng.normal(size=(4, 1000))}
     idata = az.from_dict(posterior=data)
     assert compute_elpd(idata) is None
+
+
+def test_compute_elpd_with_se_none_without_ll():
+    import arviz as az
+    rng = np.random.default_rng(42)
+    data = {"mu": rng.normal(size=(4, 1000))}
+    idata = az.from_dict(posterior=data)
+    elpd, se = compute_elpd_with_se(idata)
+    assert elpd is None
+    assert se is None
+
+
+def test_ate_hdi_width():
+    rng = np.random.default_rng(42)
+    # Normal(0, 1) samples: 94% HDI should be ~2 * 1.88 = 3.76
+    samples = rng.normal(loc=0, scale=1, size=100_000)
+    width = compute_ate_hdi_width(samples, hdi_prob=0.94)
+    # For standard normal, 94% interval is roughly [-1.88, 1.88], width ~3.76
+    assert abs(width - 3.76) < 0.1
 
 
 @pytest.fixture
