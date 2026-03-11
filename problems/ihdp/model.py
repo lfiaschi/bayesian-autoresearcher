@@ -1,17 +1,25 @@
-"""IHDP Bayesian causal model — treatment-confounder interactions.
-Heterogeneous treatment effects (CATE) via interaction terms between
-treatment and all 25 confounders.
+"""IHDP Bayesian causal model — interactions + quadratic continuous confounders.
+Treatment-confounder interactions for heterogeneous effects (CATE), plus
+squared terms for the 6 continuous confounders (x1-x6) to capture
+non-linear confounder-outcome relationships.
 """
 import numpy as np
 import pymc as pm
 
+N_CONTINUOUS = 6  # x1-x6 are continuous (already standardized by prepare.py)
+
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a linear Bayesian model with treatment-confounder interactions."""
-    coords = train_data["coords"]
+    """Build a linear model with interactions and quadratic confounder terms."""
+    coords = dict(train_data["coords"])
+    coords["cont_features"] = [f"x{i}" for i in range(1, N_CONTINUOUS + 1)]
+
+    X_raw = train_data["X"]
+    X_squared = X_raw[:, :N_CONTINUOUS] ** 2
 
     with pm.Model(coords=coords) as model:
-        X = pm.Data("X", train_data["X"], dims=("obs", "features"))
+        X = pm.Data("X", X_raw, dims=("obs", "features"))
+        X_sq = pm.Data("X_sq", X_squared, dims=("obs", "cont_features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
         # Priors — regularizing
@@ -19,14 +27,16 @@ def build_model(train_data: dict) -> pm.Model:
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=3)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=1, dims="features")
+        beta_sq = pm.Normal("beta_sq", mu=0, sigma=1, dims="cont_features")
         sigma = pm.HalfNormal("sigma", sigma=3)
 
-        # Linear predictor with treatment-confounder interactions
+        # Linear predictor with interactions + quadratic continuous terms
         mu = (
             alpha
             + beta_t * treatment
             + pm.math.dot(X, beta_x)
             + treatment * pm.math.dot(X, beta_tx)
+            + pm.math.dot(X_sq, beta_sq)
         )
         pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
@@ -39,9 +49,14 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
     """
     n_obs = len(new_data["outcome"])
     new_coords = {"obs": np.arange(n_obs)}
+    X_squared = new_data["X"][:, :N_CONTINUOUS] ** 2
     with model:
         pm.set_data(
-            {"X": new_data["X"], "treatment": new_data["treatment"]},
+            {
+                "X": new_data["X"],
+                "treatment": new_data["treatment"],
+                "X_sq": X_squared,
+            },
             coords=new_coords,
         )
         ppc = pm.sample_posterior_predictive(
@@ -58,8 +73,8 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
 
     Under this model, the individual treatment effect for observation i is:
         tau_i = beta_t + X_i @ beta_tx
-    The ATE is the average of tau_i over all training observations.
-    This avoids two expensive posterior-predictive passes.
+    The quadratic terms (beta_sq) cancel out in the ATE computation because
+    they do not interact with treatment.
 
     Falls back gracefully if idata comes from an older model without beta_tx
     (e.g., during runner's comparison with best.nc from a previous model).
