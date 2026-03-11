@@ -1,7 +1,9 @@
-"""NHEFS Bayesian causal model — Student-t likelihood with quadratic terms.
+"""NHEFS Bayesian causal model — Student-t likelihood with heteroscedastic sigma.
 Robust linear regression with treatment, confounders, and quadratic terms
 for continuous confounders to capture non-linear relationships.
 Uses Student-t likelihood to handle heavy tails in weight change data.
+Sigma is modeled as a log-linear function of treatment and confounders,
+allowing different patient subgroups to have different variability.
 Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
 """
 import numpy as np
@@ -17,8 +19,8 @@ def _quad_features(X: np.ndarray) -> np.ndarray:
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a robust linear Bayesian model for NHEFS with Student-t likelihood
-    and quadratic terms for continuous confounders."""
+    """Build a robust linear Bayesian model for NHEFS with Student-t likelihood,
+    quadratic terms for continuous confounders, and heteroscedastic sigma."""
     coords = dict(train_data["coords"])
     coords["features_quad"] = CONTINUOUS_NAMES
 
@@ -30,12 +32,11 @@ def build_model(train_data: dict) -> pm.Model:
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
         X_quad = pm.Data("X_quad", X_quad_raw, dims=("obs", "features_quad"))
 
+        # --- Mean model ---
         alpha = pm.Normal("alpha", mu=0, sigma=10)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
         beta_quad = pm.Normal("beta_quad", mu=0, sigma=1, dims="features_quad")
-        sigma = pm.HalfNormal("sigma", sigma=10)
-        nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         mu = (
             alpha
@@ -43,6 +44,18 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X, beta_x)
             + pm.math.dot(X_quad, beta_quad)
         )
+
+        # --- Heteroscedastic sigma model ---
+        sigma_alpha = pm.Normal("sigma_alpha", mu=2, sigma=1)
+        sigma_beta_t = pm.Normal("sigma_beta_t", mu=0, sigma=0.5)
+        sigma_beta_x = pm.Normal("sigma_beta_x", mu=0, sigma=0.5, dims="features")
+
+        log_sigma = sigma_alpha + sigma_beta_t * treatment + pm.math.dot(X, sigma_beta_x)
+        sigma = pm.Deterministic("sigma", pm.math.exp(log_sigma), dims="obs")
+
+        # --- Degrees of freedom ---
+        nu = pm.Gamma("nu", alpha=2, beta=0.1)
+
         pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
