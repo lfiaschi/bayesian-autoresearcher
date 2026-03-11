@@ -1,16 +1,17 @@
 """NHEFS Bayesian causal model — Student-t likelihood with heteroscedastic sigma.
-Robust linear regression with treatment, confounders, and quadratic terms
-for continuous confounders to capture non-linear relationships.
+Robust linear regression with treatment, confounders, quadratic AND cubic terms
+for continuous confounders to capture richer non-linear relationships.
 Uses Student-t likelihood to handle heavy tails in weight change data.
-Sigma is modeled as a log-linear function of treatment and confounders,
-allowing different patient subgroups to have different variability.
-Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
+Sigma is modeled as a log-linear function of treatment and confounders
+(linear + quadratic), allowing different patient subgroups to have different
+variability.  Outcome is weight change in kg (wt82_71).
 """
 import numpy as np
 import pymc as pm
 
 CONTINUOUS_IDX = [2, 3, 4, 5, 8]  # age, school, smokeintensity, smokeyrs, wt71
-CONTINUOUS_NAMES = ["age_sq", "school_sq", "smokeintensity_sq", "smokeyrs_sq", "wt71_sq"]
+CONTINUOUS_NAMES_QUAD = ["age_sq", "school_sq", "smokeintensity_sq", "smokeyrs_sq", "wt71_sq"]
+CONTINUOUS_NAMES_CUBIC = ["age_cu", "school_cu", "smokeintensity_cu", "smokeyrs_cu", "wt71_cu"]
 
 
 def _quad_features(X: np.ndarray) -> np.ndarray:
@@ -18,31 +19,41 @@ def _quad_features(X: np.ndarray) -> np.ndarray:
     return X[:, CONTINUOUS_IDX] ** 2
 
 
+def _cubic_features(X: np.ndarray) -> np.ndarray:
+    """Compute cubic terms for continuous confounders."""
+    return X[:, CONTINUOUS_IDX] ** 3
+
+
 def build_model(train_data: dict) -> pm.Model:
     """Build a robust linear Bayesian model for NHEFS with Student-t likelihood,
     quadratic terms for continuous confounders, and heteroscedastic sigma."""
     coords = dict(train_data["coords"])
-    coords["features_quad"] = CONTINUOUS_NAMES
+    coords["features_quad"] = CONTINUOUS_NAMES_QUAD
+    coords["features_cubic"] = CONTINUOUS_NAMES_CUBIC
 
     X_raw = train_data["X"]
     X_quad_raw = _quad_features(X_raw)
+    X_cubic_raw = _cubic_features(X_raw)
 
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", X_raw, dims=("obs", "features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
         X_quad = pm.Data("X_quad", X_quad_raw, dims=("obs", "features_quad"))
+        X_cubic = pm.Data("X_cubic", X_cubic_raw, dims=("obs", "features_cubic"))
 
         # --- Mean model ---
         alpha = pm.Normal("alpha", mu=0, sigma=10)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
         beta_quad = pm.Normal("beta_quad", mu=0, sigma=1, dims="features_quad")
+        beta_cubic = pm.Normal("beta_cubic", mu=0, sigma=0.5, dims="features_cubic")
 
         mu = (
             alpha
             + beta_t * treatment
             + pm.math.dot(X, beta_x)
             + pm.math.dot(X_quad, beta_quad)
+            + pm.math.dot(X_cubic, beta_cubic)
         )
 
         # --- Heteroscedastic sigma model ---
@@ -74,10 +85,12 @@ def predict(idata: object, model: pm.Model, new_data: dict) -> np.ndarray:
     n_obs = len(new_data["outcome"])
     X_new = new_data["X"]
     X_quad_new = _quad_features(X_new)
+    X_cubic_new = _cubic_features(X_new)
 
     with model:
         pm.set_data(
-            {"X": X_new, "treatment": new_data["treatment"], "X_quad": X_quad_new},
+            {"X": X_new, "treatment": new_data["treatment"],
+             "X_quad": X_quad_new, "X_cubic": X_cubic_new},
             coords={"obs": np.arange(n_obs)},
         )
         ppc = pm.sample_posterior_predictive(
@@ -95,10 +108,12 @@ def estimate_causal_effect(idata: object, model: pm.Model, train_data: dict) -> 
     train_coords = {"obs": np.arange(n_obs)}
     X_raw = train_data["X"]
     X_quad_raw = _quad_features(X_raw)
+    X_cubic_raw = _cubic_features(X_raw)
 
     with model:
         pm.set_data(
-            {"X": X_raw, "treatment": np.ones(n_obs), "X_quad": X_quad_raw},
+            {"X": X_raw, "treatment": np.ones(n_obs),
+             "X_quad": X_quad_raw, "X_cubic": X_cubic_raw},
             coords=train_coords,
         )
         ppc_t1 = pm.sample_posterior_predictive(
@@ -107,7 +122,8 @@ def estimate_causal_effect(idata: object, model: pm.Model, train_data: dict) -> 
 
     with model:
         pm.set_data(
-            {"X": X_raw, "treatment": np.zeros(n_obs), "X_quad": X_quad_raw},
+            {"X": X_raw, "treatment": np.zeros(n_obs),
+             "X_quad": X_quad_raw, "X_cubic": X_cubic_raw},
             coords=train_coords,
         )
         ppc_t0 = pm.sample_posterior_predictive(
