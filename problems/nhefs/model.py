@@ -49,8 +49,14 @@ def build_model(train_data: dict) -> pm.Model:
         sigma_alpha = pm.Normal("sigma_alpha", mu=2, sigma=1)
         sigma_beta_t = pm.Normal("sigma_beta_t", mu=0, sigma=0.5)
         sigma_beta_x = pm.Normal("sigma_beta_x", mu=0, sigma=0.5, dims="features")
+        sigma_beta_quad = pm.Normal("sigma_beta_quad", mu=0, sigma=0.5, dims="features_quad")
 
-        log_sigma = sigma_alpha + sigma_beta_t * treatment + pm.math.dot(X, sigma_beta_x)
+        log_sigma = (
+            sigma_alpha
+            + sigma_beta_t * treatment
+            + pm.math.dot(X, sigma_beta_x)
+            + pm.math.dot(X_quad, sigma_beta_quad)
+        )
         sigma = pm.Deterministic("sigma", pm.math.exp(log_sigma), dims="obs")
 
         # --- Degrees of freedom ---
