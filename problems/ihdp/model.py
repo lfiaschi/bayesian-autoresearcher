@@ -41,7 +41,7 @@ def build_model(train_data: dict) -> pm.Model:
         alpha = pm.Normal("alpha", mu=0, sigma=5)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=3)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
-        beta_tx = pm.Normal("beta_tx", mu=0, sigma=1, dims="features")
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.7, dims="features")
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=1, dims="cont_features")
         beta_tps = pm.Normal("beta_tps", mu=0, sigma=1)
         sigma = pm.HalfNormal("sigma", sigma=3)
