@@ -1,11 +1,12 @@
 """IHDP Bayesian causal model — doubly robust with propensity score.
 Treatment interactions restricted to continuous confounders (x1-x6) only,
 plus squared terms for those same confounders to capture non-linear
-confounder-outcome relationships, and an externally estimated propensity
-score (logistic regression) as an additional covariate for doubly robust
-confounding adjustment.  Binary confounders (x7-x25) still enter the main
-effects (beta_x) but do NOT get interaction terms, eliminating 19 noisy
-parameters for better regularization.
+confounder-outcome relationships, treatment x quadratic confounder
+interactions for non-linear heterogeneity in treatment effects, and an
+externally estimated propensity score (logistic regression) as an additional
+covariate for doubly robust confounding adjustment.  Binary confounders
+(x7-x25) still enter the main effects (beta_x) but do NOT get interaction
+terms, eliminating 19 noisy parameters for better regularization.
 """
 import numpy as np
 import pymc as pm
@@ -47,11 +48,14 @@ def build_model(train_data: dict) -> pm.Model:
         beta_x = pm.Normal("beta_x", mu=0, sigma=1, dims="features")
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.7, dims="cont_features")
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.5, dims="cont_features")
+        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.3, dims="cont_features")
         beta_tps = pm.Normal("beta_tps", mu=0, sigma=1)
         sigma = pm.HalfNormal("sigma", sigma=2)
 
         # Linear predictor: all 25 confounders in main effects, but only
         # continuous confounders (x1-x6) get treatment interactions.
+        # beta_tx_sq captures non-linear heterogeneity in treatment effects
+        # via treatment x X^2 interactions.
         # PS * treatment captures residual confounding that varies with
         # propensity; main confounding is already handled by X and X^2.
         mu = (
@@ -60,6 +64,7 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X, beta_x)
             + treatment * pm.math.dot(X_cont, beta_tx)
             + pm.math.dot(X_sq, beta_sq)
+            + treatment * pm.math.dot(X_sq, beta_tx_sq)
             + beta_tps * treatment * ps_data
         )
         pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
@@ -100,14 +105,14 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
     """Estimate ATE using posterior samples of structural parameters.
 
     Under this model, the individual treatment effect for observation i is:
-        tau_i = beta_t + X_cont_i @ beta_tx + beta_tps * ps_i
-    Only continuous confounders (x1-x6) participate in beta_tx interactions.
-    The quadratic terms (beta_sq) cancel out because they do not interact
-    with treatment.
+        tau_i = beta_t + X_cont_i @ beta_tx + X_sq_i @ beta_tx_sq + beta_tps * ps_i
+    Only continuous confounders (x1-x6) participate in beta_tx and beta_tx_sq
+    interactions. The main quadratic terms (beta_sq) cancel out because they
+    do not interact with treatment.
 
-    Falls back gracefully if idata comes from an older model without beta_tx
-    or beta_tps (e.g., during runner's comparison with best.nc from a previous
-    model).
+    Falls back gracefully if idata comes from an older model without beta_tx,
+    beta_tx_sq, or beta_tps (e.g., during runner's comparison with best.nc
+    from a previous model).
     """
     # Extract posterior samples: shape (n_chains, n_draws)
     beta_t_samples = idata.posterior["beta_treatment"].values
@@ -116,7 +121,7 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
 
     ate_samples = beta_t_flat.copy()
 
-    # Add interaction terms if present (only continuous confounders)
+    # Add linear interaction terms if present (only continuous confounders)
     if "beta_tx" in idata.posterior:
         beta_tx_samples = idata.posterior["beta_tx"].values
         n_features = beta_tx_samples.shape[2]
@@ -129,6 +134,19 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
         interaction_term = X_cont_train @ beta_tx_flat.T  # (n_obs, n_samples)
         # ATE contribution = mean_i(X_cont_i @ beta_tx)
         ate_samples = ate_samples + interaction_term.mean(axis=0)
+
+    # Add quadratic interaction terms if present (treatment x X^2)
+    if "beta_tx_sq" in idata.posterior:
+        beta_tx_sq_samples = idata.posterior["beta_tx_sq"].values
+        n_features_sq = beta_tx_sq_samples.shape[2]
+        beta_tx_sq_flat = beta_tx_sq_samples.reshape(-1, n_features_sq)  # (n_samples, n_features)
+
+        X_sq_train = train_data["X"][:, :n_features_sq] ** 2
+
+        # Individual treatment effects: tau_i includes X_sq_i @ beta_tx_sq
+        interaction_sq = X_sq_train @ beta_tx_sq_flat.T  # (n_obs, n_samples)
+        # ATE contribution = mean_i(X_sq_i @ beta_tx_sq)
+        ate_samples = ate_samples + interaction_sq.mean(axis=0)
 
     # Add PS-treatment interaction if present
     if "beta_tps" in idata.posterior:
