@@ -1,26 +1,27 @@
-"""LaLonde Bayesian causal model — baseline.
-Simple linear regression with treatment and confounders.
-Outcome is 1978 earnings (re78) in USD, prior scales adjusted accordingly.
+"""LaLonde Bayesian causal model — v2.
+Student-T likelihood for robustness to zero-inflation and heavy tails.
+Informative priors centered on empirical scale of USD earnings.
 """
 import numpy as np
 import pymc as pm
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a linear Bayesian model for LaLonde."""
+    """Build a robust Bayesian model for LaLonde with Student-T likelihood."""
     coords = train_data["coords"]
 
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", train_data["X"], dims=("obs", "features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
-        alpha = pm.Normal("alpha", mu=0, sigma=5000)
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=3000)
+        alpha = pm.Normal("alpha", mu=5000, sigma=3000)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=2000)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2000, dims="features")
         sigma = pm.HalfNormal("sigma", sigma=5000)
+        nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         mu = alpha + beta_t * treatment + pm.math.dot(X, beta_x)
-        pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
+        pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
 
