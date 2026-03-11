@@ -1,14 +1,17 @@
-"""LaLonde Bayesian causal model — v2.
-Student-T likelihood for robustness to zero-inflation and heavy tails.
-Informative priors centered on empirical scale of USD earnings.
+"""LaLonde Bayesian causal model — v3.
+Student-T likelihood with treatment-confounder interactions.
+Allows heterogeneous treatment effects across covariate profiles.
 """
 import numpy as np
 import pymc as pm
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a robust Bayesian model for LaLonde with Student-T likelihood."""
+    """Build a robust Bayesian model with treatment-confounder interactions."""
     coords = train_data["coords"]
+    n_features = train_data["X"].shape[1]
+    interaction_names = [f"ix_{i}" for i in range(n_features)]
+    coords["interactions"] = interaction_names
 
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", train_data["X"], dims=("obs", "features"))
@@ -17,10 +20,17 @@ def build_model(train_data: dict) -> pm.Model:
         alpha = pm.Normal("alpha", mu=5000, sigma=3000)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=2000)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2000, dims="features")
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=1000, dims="interactions")
         sigma = pm.HalfNormal("sigma", sigma=5000)
         nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
-        mu = alpha + beta_t * treatment + pm.math.dot(X, beta_x)
+        tx_interaction = X * treatment[:, None]
+        mu = (
+            alpha
+            + beta_t * treatment
+            + pm.math.dot(X, beta_x)
+            + pm.math.dot(tx_interaction, beta_tx)
+        )
         pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
