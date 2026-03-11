@@ -1,0 +1,18 @@
+# Data and results (large files, downloaded per-machine)
+problems/*/data/
+problems/*/runs/
+*.nc
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Experiment logs
+run.log
+results.tsv
+
+# uv — lock file is committed for reproducibility
+
+# OS
+.DS_Store

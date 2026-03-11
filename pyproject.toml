@@ -1,0 +1,27 @@
+[project]
+name = "bayesian-autoresearcher"
+version = "0.1.0"
+description = "Autonomous Bayesian causal model research loop"
+requires-python = ">=3.11"
+dependencies = [
+    "pymc>=5.10",
+    "nutpie>=0.13",
+    "arviz>=0.18",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.12",
+    "scikit-learn>=1.4",
+    "requests>=2.31",
+    "properscoring>=0.1",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
