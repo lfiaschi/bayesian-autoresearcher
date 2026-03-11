@@ -37,14 +37,14 @@ def build_model(train_data: dict) -> pm.Model:
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
         ps_data = pm.Data("ps", ps, dims="obs")
 
-        # Priors — regularizing
-        alpha = pm.Normal("alpha", mu=0, sigma=5)
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=3)
-        beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
+        # Priors — tightened for standardized confounders (598 training obs)
+        alpha = pm.Normal("alpha", mu=0, sigma=3)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=2)
+        beta_x = pm.Normal("beta_x", mu=0, sigma=1, dims="features")
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.7, dims="features")
-        beta_sq = pm.Normal("beta_sq", mu=0, sigma=1, dims="cont_features")
+        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.5, dims="cont_features")
         beta_tps = pm.Normal("beta_tps", mu=0, sigma=1)
-        sigma = pm.HalfNormal("sigma", sigma=3)
+        sigma = pm.HalfNormal("sigma", sigma=2)
 
         # Linear predictor with interactions + quadratic terms + PS-treatment interaction
         # PS * treatment captures residual confounding that varies with propensity;
