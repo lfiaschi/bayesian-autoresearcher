@@ -1,17 +1,16 @@
-"""LaLonde Bayesian causal model — v3.
-Student-T likelihood with treatment-confounder interactions.
-Allows heterogeneous treatment effects across covariate profiles.
+"""LaLonde Bayesian causal model — v7.
+Censored Student-T: treats zero earnings as left-censored at 0.
+This properly handles the 27% zero-inflation while keeping a single
+observed variable for clean ELPD computation.
+Treatment-confounder interactions for heterogeneous effects.
 """
 import numpy as np
 import pymc as pm
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a robust Bayesian model with treatment-confounder interactions."""
+    """Build censored Student-T model for LaLonde earnings."""
     coords = train_data["coords"]
-    n_features = train_data["X"].shape[1]
-    interaction_names = [f"ix_{i}" for i in range(n_features)]
-    coords["interactions"] = interaction_names
 
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", train_data["X"], dims=("obs", "features"))
@@ -20,7 +19,7 @@ def build_model(train_data: dict) -> pm.Model:
         alpha = pm.Normal("alpha", mu=5000, sigma=3000)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=2000)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2000, dims="features")
-        beta_tx = pm.Normal("beta_tx", mu=0, sigma=1000, dims="interactions")
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=1000, dims="features")
         sigma = pm.HalfNormal("sigma", sigma=5000)
         nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
@@ -31,15 +30,15 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X, beta_x)
             + pm.math.dot(tx_interaction, beta_tx)
         )
-        pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
+
+        latent = pm.StudentT.dist(nu=nu, mu=mu, sigma=sigma)
+        pm.Censored("y", latent, lower=0, upper=None, observed=train_data["outcome"], dims="obs")
 
     return model
 
 
 def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
-    """Generate posterior predictive samples for new data.
-    Returns array of shape (n_samples, n_obs).
-    """
+    """Generate posterior predictive samples for new data."""
     n_obs = len(new_data["outcome"])
     new_coords = {"obs": np.arange(n_obs)}
     with model:
@@ -52,7 +51,7 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
         )
 
     samples = ppc.predictions["y"].values
-    n_chains, n_draws, n_obs = samples.shape
+    n_chains, n_draws, _ = samples.shape
     return samples.reshape(n_chains * n_draws, n_obs)
 
 
