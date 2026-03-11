@@ -16,17 +16,17 @@ def test_parse_problem_config(tmp_path):
     problem_md = tmp_path / "problem.md"
     problem_md.write_text(
         "---\n"
-        "primary_metric: crps\n"
-        "secondary_metrics: [elpd, mae]\n"
+        "primary_metric: elpd\n"
+        "secondary_metrics: [crps, mae]\n"
         "split_strategy: random\n"
-        "split_ratios: [0.6, 0.2, 0.2]\n"
+        "split_ratios: [0.8, 0.2]\n"
         "---\n"
         "# Test Problem\n"
     )
     config = parse_problem_config(problem_md)
-    assert config["primary_metric"] == "crps"
+    assert config["primary_metric"] == "elpd"
     assert config["split_strategy"] == "random"
-    assert config["split_ratios"] == [0.6, 0.2, 0.2]
+    assert config["split_ratios"] == [0.8, 0.2]
 
 
 def test_split_data_random():
@@ -45,6 +45,20 @@ def test_split_data_random():
     assert abs(train_rate - orig_rate) < 0.1
 
 
+def test_split_data_random_two_way():
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame({
+        "treatment": rng.choice([0, 1], size=200),
+        "outcome": rng.normal(size=200),
+        "x1": rng.normal(size=200),
+    })
+    result = split_data_random(df, treatment_col="treatment", ratios=[0.8, 0.2], seed=42)
+    assert len(result) == 2
+    train, test = result
+    assert len(train) + len(test) == 200
+    assert abs(len(train) - 160) < 10
+
+
 def test_split_data_temporal():
     df = pd.DataFrame({
         "date": pd.date_range("2020-01-01", periods=100, freq="D"),
@@ -57,6 +71,20 @@ def test_split_data_temporal():
     assert len(test) == 20
     assert train["date"].max() < val["date"].min()
     assert val["date"].max() < test["date"].min()
+
+
+def test_split_data_temporal_two_way():
+    df = pd.DataFrame({
+        "date": pd.date_range("2020-01-01", periods=100, freq="D"),
+        "treatment": np.random.choice([0, 1], size=100),
+        "outcome": np.random.normal(size=100),
+    })
+    result = split_data_temporal(df, temporal_col="date", ratios=[0.8, 0.2])
+    assert len(result) == 2
+    train, test = result
+    assert len(train) == 80
+    assert len(test) == 20
+    assert train["date"].max() < test["date"].min()
 
 
 def test_make_data_dict():
@@ -75,16 +103,19 @@ def test_make_data_dict():
 
 
 def test_print_results_format(capsys):
-    scores = {"val_crps": 0.45, "val_mae": 1.23}
+    scores = {"elpd": -234.5, "test_crps": 0.45, "test_mae": 1.23}
     convergence = {"ok": True, "r_hat_max": 1.002, "ess_min": 856, "divergences": 0}
-    causal = {"ate_estimate": 3.45, "ate_hdi_3": 2.1, "ate_hdi_97": 4.8}
+    causal = {"ate_estimate": 3.45, "ate_hdi_width": 2.72, "ate_hdi_3": 2.1, "ate_hdi_97": 4.8}
     timing = {"sampling_seconds": 142.3, "total_seconds": 180.1}
-    print_results(scores, convergence, causal, timing, n_params=5)
+    comparison = {"delpd": 5.2, "dse": 2.1, "result": "better"}
+    print_results(scores, convergence, causal, timing, n_params=5, comparison=comparison)
     captured = capsys.readouterr()
     assert "---" in captured.out
-    assert "val_crps:" in captured.out
+    assert "elpd:" in captured.out
     assert "convergence_ok:" in captured.out
     assert "True" in captured.out
+    assert "delpd:" in captured.out
+    assert "result:" in captured.out
 
 
 def test_format_line_bool():

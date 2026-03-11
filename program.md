@@ -19,7 +19,7 @@ To set up a new experiment run, work with the user to:
 5. **Verify data exists**: Check that `problems/<name>/data/` has CSV files. If not, run `uv run python download_datasets.py`.
 6. **Initialize results.tsv**: Create with header row:
    ```
-   printf 'commit\tval_crps\tval_mae\tconvergence\tstatus\tdescription\n' > problems/<name>/results.tsv
+   printf 'commit\telpd\telpd_se\tate_hdi_width\tconvergence\tstatus\tdescr\n' > problems/<name>/results.tsv
    ```
 7. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
 
@@ -40,7 +40,7 @@ uv run python problems/<name>/prepare.py > run.log 2>&1
 - Install new packages or add dependencies.
 - Modify the scoring or evaluation harness.
 
-**The goal: minimize the primary_metric on the validation set** (as defined in problem.md). For most problems this is CRPS (lower is better). The model must also pass convergence checks (r_hat < 1.01, ESS > 400, no divergences).
+**The goal: maximize ELPD (via PSIS-LOO)** as the primary metric. ELPD doesn't need a validation split, uses all training data, and naturally penalizes complexity. Use |dELPD| > 2*dSE for significance testing. ATE HDI width serves as tiebreaker for equivalent models. The model must also pass convergence checks (r_hat < 1.01, ESS > 400, no divergences).
 
 **Sub-agent usage**: For each experiment, spawn a sub-agent using the Agent tool:
 
@@ -83,11 +83,11 @@ The prepare.py runner prints a summary block:
 
 ```
 ---
-val_crps:           0.4523
-val_mae:            1.2340
-val_rmse:           1.5670
-val_elpd:           -234.5000
-val_ate_bias:       0.5600
+elpd:               -234.5000
+elpd_se:            12.3000
+test_crps:          0.4523
+test_mae:           1.2340
+ate_bias:           0.5600
 convergence_ok:     True
 r_hat_max:          1.0020
 ess_min:            856
@@ -96,13 +96,17 @@ n_params:           5
 sampling_seconds:   142.3
 total_seconds:      180.1
 ate_estimate:       3.4500
+ate_hdi_width:      2.7200
 ate_hdi_3:          2.1000
 ate_hdi_97:         4.8200
+delpd:              5.2000
+dse:                2.1000
+result:             better
 ```
 
-Extract the primary metric:
+Extract key metrics:
 ```
-grep "^val_crps:" run.log
+grep "^elpd:\|^elpd_se:\|^convergence_ok:\|^ate_estimate:\|^ate_hdi_width:\|^comparison:" run.log
 ```
 
 ## Logging results
@@ -112,22 +116,23 @@ When an experiment is done, log it to `problems/<name>/results.tsv` (tab-separat
 Header and columns:
 
 ```
-commit	val_crps	val_mae	convergence	status	description
+commit	elpd	elpd_se	ate_hdi_width	convergence	status	descr
 ```
 
 1. git commit hash (short, 7 chars)
-2. primary metric value (e.g. val_crps) — use 999.0 for crashes
-3. val_mae — use 999.0 for crashes
-4. convergence: `pass` or `fail`
-5. status: `keep`, `discard`, or `crash`
-6. short description of what this experiment tried
+2. elpd — use -999.0 for crashes
+3. elpd_se — use 999.0 for crashes
+4. ate_hdi_width — use 999.0 for crashes
+5. convergence: `pass` or `fail`
+6. status: `keep`, `discard`, or `crash`
+7. short description of what this experiment tried
 
 Example:
 ```
-commit	val_crps	val_mae	convergence	status	description
-a1b2c3d	0.4523	1.234	pass	keep	baseline linear model
-b2c3d4e	0.4210	1.198	pass	keep	add treatment-age interaction
-c3d4e5f	999.0	999.0	fail	crash	hierarchical model (divergences)
+commit	elpd	elpd_se	ate_hdi_width	convergence	status	descr
+a1b2c3d	-234.5	12.3	2.72	pass	keep	baseline linear model
+b2c3d4e	-220.1	11.8	2.45	pass	keep	add treatment-age interaction
+c3d4e5f	-999.0	999.0	999.0	fail	crash	hierarchical model (divergences)
 ```
 
 ## The experiment loop
@@ -141,12 +146,18 @@ LOOP FOREVER:
 5. git commit the change with a descriptive message
 6. Run the experiment: `uv run python problems/<name>/prepare.py > run.log 2>&1`
    - Use a 10-minute timeout. If exceeded, treat as crash.
-7. Read results: `grep "^val_crps:\|^convergence_ok:\|^val_mae:\|^ate_estimate:" run.log`
+7. Read results: `grep "^elpd:\|^elpd_se:\|^convergence_ok:\|^ate_estimate:\|^ate_hdi_width:\|^delpd:\|^dse:\|^result:" run.log`
 8. If grep is empty, the run crashed. Run `tail -n 50 run.log` for the stack trace.
 9. Record results in results.tsv (do NOT commit results.tsv — keep it untracked)
-10. If primary metric improved → keep the commit ("advance" the branch)
-11. If primary metric is worse or convergence failed → `git reset --hard HEAD~1`
-12. Go to step 1
+10. Keep/discard rule (runner.py handles best.nc automatically):
+    - First converged run: always keep
+    - compare_elpd(new, best) result:
+      - "better" (dELPD > 2*dSE): KEEP
+      - "equivalent" (|dELPD| < dSE): KEEP if ATE HDI is narrower
+      - "worse": DISCARD
+11. If kept → keep the commit ("advance" the branch)
+12. If discarded or convergence failed → `git reset --hard HEAD~1`
+13. Go to step 1
 
 ## Experiment strategy
 
