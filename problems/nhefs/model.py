@@ -47,13 +47,13 @@ def build_model(train_data: dict) -> pm.Model:
         X_sigma = X[:, SIGMA_INDICES]              # (n_obs, 2)
 
         # --- Priors ---
-        alpha = pm.Normal("alpha", mu=0, sigma=10)
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
+        alpha = pm.Normal("alpha", mu=0, sigma=5)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=3)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
         nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         # --- Confounder-dependent heteroscedastic sigma ---
-        log_sigma_intercept = pm.Normal("log_sigma_intercept", mu=2, sigma=0.5)
+        log_sigma_intercept = pm.Normal("log_sigma_intercept", mu=2, sigma=0.3)
         log_sigma_coeffs = pm.Normal(
             "log_sigma_coeffs", mu=0, sigma=0.3, dims="sigma_features"
         )
