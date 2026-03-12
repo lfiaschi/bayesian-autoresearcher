@@ -101,6 +101,28 @@ Four causal inference benchmarks with varying complexity:
 </p>
 </details>
 
+### LaLonde
+
+16 experiments, 8 kept. ELPD improved by 822 points. The breakthrough was switching from a Normal likelihood to a **Gamma GLM with log-link** — earnings are non-negative and right-skewed, and the Gamma handles this naturally. Student-t improved ELPD but destroyed ATE by down-weighting high earners. Final ATE: $697 (true: ~$886).
+
+<p align="center">
+  <img src="problems/lalonde/causal_estimates.png" width="90%" alt="LaLonde: ATE estimates with 94% HDI across model iterations">
+</p>
+
+<details>
+<summary>ELPD optimization trajectory</summary>
+<p align="center">
+  <img src="problems/lalonde/iterations.png" width="85%" alt="LaLonde: ELPD over 16 iterations">
+</p>
+</details>
+
+<details>
+<summary>Final model architecture</summary>
+<p align="center">
+  <img src="problems/lalonde/model_diagram.png" width="85%" alt="LaLonde: final model diagram">
+</p>
+</details>
+
 ## Project structure
 
 ```
