@@ -56,9 +56,14 @@ def build_model(train_data: dict) -> pm.Model:
         beta_pair = pm.Normal("beta_pair", mu=0, sigma=0.15, dims="pair_features")
         beta_g4 = pm.Normal("beta_g4", mu=0, sigma=0.05)
         beta_g5 = pm.Normal("beta_g5", mu=0, sigma=0.02)
-        log_sigma_0 = pm.Normal("log_sigma_0", mu=-1.5, sigma=0.5)  # base log-sigma (exp(-1.5) ≈ 0.22)
-        log_sigma_gestat = pm.Normal("log_sigma_gestat", mu=0, sigma=0.3)  # gestat10 effect on log-sigma
-        sigma = pm.math.exp(log_sigma_0 + log_sigma_gestat * X_cont_data[:, 2])
+        log_sigma_0 = pm.Normal("log_sigma_0", mu=-1.5, sigma=0.5)
+        log_sigma_gestat = pm.Normal("log_sigma_gestat", mu=0, sigma=0.3)
+        log_sigma_tx = pm.Normal("log_sigma_tx", mu=0, sigma=0.2)
+        sigma = pm.math.exp(
+            log_sigma_0
+            + log_sigma_gestat * X_cont_data[:, 2]
+            + log_sigma_tx * treatment
+        )
 
         mu = (
             alpha
