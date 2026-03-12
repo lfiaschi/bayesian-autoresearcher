@@ -1,12 +1,15 @@
-"""NHEFS Bayesian causal model — quadratic + interactions + Student-t likelihood.
+"""NHEFS Bayesian causal model — confounder-dependent heteroscedasticity.
 
-Extends the baseline linear model with:
+Extends the Student-t model with:
 - Quadratic terms for continuous confounders (age, school, smokeintensity,
   smokeyrs, wt71) to capture non-linear confounder-outcome relationships.
 - Treatment-confounder interactions for continuous confounders to capture
   heterogeneous treatment effects.
 - Student-t likelihood for robustness against outlier weight changes
   (range roughly -40 to +50 kg).
+- Confounder-dependent heteroscedasticity: log(sigma) depends on
+  smokeintensity and wt71, allowing heavier smokers and individuals with
+  different baseline weights to have more variable weight change.
 
 Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
 """
@@ -21,6 +24,12 @@ CONTINUOUS_INDICES: list[int] = [2, 3, 4, 5, 8]
 CONTINUOUS_NAMES: list[str] = [
     "age", "school", "smokeintensity", "smokeyrs", "wt71",
 ]
+
+# Indices of confounders used for heteroscedastic sigma:
+# smokeintensity (index 4) and wt71 (index 8)
+SIGMA_INDICES: list[int] = [4, 8]
+
+SIGMA_FEATURE_NAMES: list[str] = ["smokeintensity", "wt71"]
 
 
 def build_model(train_data: dict) -> pm.Model:
@@ -39,6 +48,7 @@ def build_model(train_data: dict) -> pm.Model:
     coords = {
         **train_data["coords"],
         "continuous": CONTINUOUS_NAMES,
+        "sigma_features": SIGMA_FEATURE_NAMES,
     }
 
     with pm.Model(coords=coords) as model:
@@ -51,14 +61,24 @@ def build_model(train_data: dict) -> pm.Model:
         X_sq = X_cont ** 2                         # (n_obs, 5)
         X_interact = treatment[:, None] * X_cont   # (n_obs, 5)
 
+        # --- Derived quantities for heteroscedastic sigma ---
+        X_sigma = X[:, SIGMA_INDICES]                 # (n_obs, 2)
+
         # --- Priors ---
         alpha = pm.Normal("alpha", mu=0, sigma=10)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
         beta_x2 = pm.Normal("beta_x2", mu=0, sigma=1, dims="continuous")
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=1, dims="continuous")
-        sigma = pm.HalfNormal("sigma", sigma=10)
         nu = pm.Gamma("nu", alpha=2, beta=0.1)
+
+        # --- Confounder-dependent heteroscedastic sigma ---
+        log_sigma_intercept = pm.Normal("log_sigma_intercept", mu=2, sigma=0.5)
+        log_sigma_coeffs = pm.Normal(
+            "log_sigma_coeffs", mu=0, sigma=0.3, dims="sigma_features"
+        )
+        log_sigma = log_sigma_intercept + pm.math.dot(X_sigma, log_sigma_coeffs)
+        sigma = pm.math.exp(log_sigma)
 
         # --- Linear predictor ---
         mu = (
