@@ -53,7 +53,7 @@ def build_model(train_data: dict) -> pm.Model:
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=0.4)
 
         # Main effects (confounders already standardised)
-        beta_x = pm.Normal("beta_x", mu=0, sigma=0.5, dims="features")
+        beta_x = pm.Normal("beta_x", mu=0, sigma=0.3, dims="features")
 
         log_mu = (
             alpha
