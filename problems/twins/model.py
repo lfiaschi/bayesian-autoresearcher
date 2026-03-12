@@ -1,7 +1,8 @@
-"""Twins Bayesian causal model — tight priors + quadratic, cubic & pairwise interactions.
+"""Twins Bayesian causal model — heteroscedastic noise + quadratic, cubic & pairwise interactions.
 Linear regression with treatment, confounders, quadratic and cubic terms for
 continuous confounders (mager8, mrace, gestat10), plus pairwise interactions
 between the 3 continuous confounders.
+Heteroscedastic noise: separate sigma for treated and control groups.
 Outcome is binary mortality (0/1) with ~3% prevalence.
 Priors tightened to reflect low base rate and small effects.
 """
@@ -44,7 +45,9 @@ def build_model(train_data: dict) -> pm.Model:
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.2, dims="cont_features")
         beta_cb = pm.Normal("beta_cb", mu=0, sigma=0.1, dims="cont_features")
         beta_pair = pm.Normal("beta_pair", mu=0, sigma=0.15, dims="pair_features")
-        sigma = pm.HalfNormal("sigma", sigma=0.3)
+        sigma_0 = pm.HalfNormal("sigma_0", sigma=0.3)  # control group noise
+        sigma_1 = pm.HalfNormal("sigma_1", sigma=0.3)  # treated group noise
+        sigma = sigma_0 + (sigma_1 - sigma_0) * treatment  # vectorized selection
 
         mu = (
             alpha
