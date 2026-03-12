@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://lucafiaschi.com/blog/posts/bayesian-autoresearcher/"><img src="https://img.shields.io/badge/Blog_Post-Read_the_write--up-orange?style=for-the-badge&logo=hashnode&logoColor=white" alt="Blog Post"></a>
-  <a href="https://www.linkedin.com/in/lucafiaschi/"><img src="https://img.shields.io/badge/LinkedIn-Luca_Fiaschi-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>
+  <a href="https://www.linkedin.com/in/lfiaschi/"><img src="https://img.shields.io/badge/LinkedIn-Luca_Fiaschi-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>
   <a href="https://github.com/lfiaschi/bayesian-autoresearcher"><img src="https://img.shields.io/github/stars/lfiaschi/bayesian-autoresearcher?style=for-the-badge&logo=github&label=Stars" alt="GitHub Stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="License"></a>
 </p>
