@@ -136,7 +136,9 @@ def plot_iterations(
 
     kept, discarded, crashed = split_by_status(rows)
 
-    valid_elpds = [r.elpd for r in rows if r.elpd > -998]
+    valid_elpds = [r.elpd for r in rows if r.status != "crash"]
+    if not valid_elpds:
+        valid_elpds = [r.elpd for r in rows]
     crash_floor = min(valid_elpds) - 12
 
     fig, (ax_top, ax_bot) = plt.subplots(
