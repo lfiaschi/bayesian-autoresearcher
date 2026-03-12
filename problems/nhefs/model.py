@@ -1,10 +1,12 @@
-"""NHEFS Bayesian causal model — quadratic + interactions.
+"""NHEFS Bayesian causal model — quadratic + interactions + Student-t likelihood.
 
 Extends the baseline linear model with:
 - Quadratic terms for continuous confounders (age, school, smokeintensity,
   smokeyrs, wt71) to capture non-linear confounder-outcome relationships.
 - Treatment-confounder interactions for continuous confounders to capture
   heterogeneous treatment effects.
+- Student-t likelihood for robustness against outlier weight changes
+  (range roughly -40 to +50 kg).
 
 Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
 """
@@ -22,7 +24,7 @@ CONTINUOUS_NAMES: list[str] = [
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a Bayesian linear model with quadratic and interaction terms.
+    """Build a Bayesian model with quadratic terms, interactions, and Student-t likelihood.
 
     Parameters
     ----------
@@ -56,6 +58,7 @@ def build_model(train_data: dict) -> pm.Model:
         beta_x2 = pm.Normal("beta_x2", mu=0, sigma=1, dims="continuous")
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=1, dims="continuous")
         sigma = pm.HalfNormal("sigma", sigma=10)
+        nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         # --- Linear predictor ---
         mu = (
@@ -66,8 +69,8 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X_interact, beta_tx)
         )
 
-        # --- Likelihood ---
-        pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
+        # --- Likelihood (Student-t for robustness against outliers) ---
+        pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
 
