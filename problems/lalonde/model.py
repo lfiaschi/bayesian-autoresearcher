@@ -12,8 +12,12 @@ Features:
 - Gamma likelihood (non-negative, right-skewed)
 - Log link for the mean
 - Quadratic terms for continuous confounders
-- Treatment x continuous interactions + treatment x quadratic interactions
 - Outcome shifted by +1 for Gamma support
+
+Simplified from previous version: removed treatment x covariate
+interactions (beta_tx, beta_tx_sq) and X_cont data container.
+With only 722 observations and a log-link, these added noise and
+widened the ATE HDI without clear benefit.
 """
 import numpy as np
 import pymc as pm
@@ -39,7 +43,7 @@ def _extract_continuous(X: np.ndarray) -> np.ndarray:
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a Gamma GLM with log link, quadratic terms, and interactions.
+    """Build a Gamma GLM with log link and quadratic terms.
 
     Args:
         train_data: Dict with keys X, treatment, outcome, coords.
@@ -53,15 +57,13 @@ def build_model(train_data: dict) -> pm.Model:
     }
 
     X_all = train_data["X"]
-    X_cont = _extract_continuous(X_all)
-    X_sq = X_cont ** 2
+    X_sq = _extract_continuous(X_all) ** 2
     treatment = train_data["treatment"]
     outcome_shifted = train_data["outcome"] + OUTCOME_SHIFT
 
     with pm.Model(coords=coords) as model:
         # Data containers
         X_data = pm.Data("X", X_all, dims=("obs", "features"))
-        X_cont_data = pm.Data("X_cont", X_cont, dims=("obs", "cont_features"))
         X_sq_data = pm.Data("X_sq", X_sq, dims=("obs", "cont_features"))
         t_data = pm.Data("treatment", treatment, dims="obs")
 
@@ -76,17 +78,11 @@ def build_model(train_data: dict) -> pm.Model:
         beta_x = pm.Normal("beta_x", mu=0, sigma=0.5, dims="features")
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.3, dims="cont_features")
 
-        # Treatment-covariate interactions
-        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.2, dims="cont_features")
-        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.1, dims="cont_features")
-
         log_mu = (
             alpha
             + beta_t * t_data
             + pm.math.dot(X_data, beta_x)
             + pm.math.dot(X_sq_data, beta_sq)
-            + t_data * pm.math.dot(X_cont_data, beta_tx)
-            + t_data * pm.math.dot(X_sq_data, beta_tx_sq)
         )
         mu = pm.math.exp(log_mu)
 
@@ -114,14 +110,12 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
         Array of shape (n_samples, n_obs).
     """
     n_obs = len(new_data["outcome"])
-    X_cont = _extract_continuous(new_data["X"])
-    X_sq = X_cont ** 2
+    X_sq = _extract_continuous(new_data["X"]) ** 2
 
     with model:
         pm.set_data(
             {
                 "X": new_data["X"],
-                "X_cont": X_cont,
                 "X_sq": X_sq,
                 "treatment": new_data["treatment"],
             },
@@ -154,15 +148,13 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
         Dict with 'ate' (float) and 'ate_samples' (ndarray).
     """
     n_obs = len(train_data["outcome"])
-    X_cont = _extract_continuous(train_data["X"])
-    X_sq = X_cont ** 2
+    X_sq = _extract_continuous(train_data["X"]) ** 2
 
     # Pass 1: predict under treatment = 1 for everyone
     with model:
         pm.set_data(
             {
                 "X": train_data["X"],
-                "X_cont": X_cont,
                 "X_sq": X_sq,
                 "treatment": np.ones(n_obs),
             },
@@ -177,7 +169,6 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
         pm.set_data(
             {
                 "X": train_data["X"],
-                "X_cont": X_cont,
                 "X_sq": X_sq,
                 "treatment": np.zeros(n_obs),
             },
