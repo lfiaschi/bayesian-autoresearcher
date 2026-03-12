@@ -1,4 +1,22 @@
-# Bayesian Autoresearcher
+<p align="center">
+  <img src="images/banner.png" alt="Bayesian Autoresearcher" width="600">
+</p>
+
+<p align="center">
+  <a href="https://lucafiaschi.com/blog/posts/bayesian-autoresearcher/"><img src="https://img.shields.io/badge/Blog_Post-Read_the_write--up-orange?style=for-the-badge&logo=hashnode&logoColor=white" alt="Blog Post"></a>
+  <a href="https://www.linkedin.com/in/lucafiaschi/"><img src="https://img.shields.io/badge/LinkedIn-Luca_Fiaschi-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>
+  <a href="https://github.com/lfiaschi/bayesian-autoresearcher"><img src="https://img.shields.io/github/stars/lfiaschi/bayesian-autoresearcher?style=for-the-badge&logo=github&label=Stars" alt="GitHub Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="License"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/PyMC-5.10+-003E6C?style=flat-square" alt="PyMC">
+  <img src="https://img.shields.io/badge/Sampler-nutpie-4B0082?style=flat-square" alt="nutpie">
+  <img src="https://img.shields.io/badge/Agent-Claude_Code-D97706?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Code">
+</p>
+
+---
 
 **Can an AI agent autonomously build Bayesian causal models?**
 
