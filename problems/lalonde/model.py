@@ -1,9 +1,10 @@
-"""LaLonde Bayesian causal model — quadratic + treatment interactions.
+"""LaLonde Bayesian causal model — quadratic + treatment interactions + Student-t.
 
 Extends baseline with:
 - Quadratic terms for continuous confounders (age^2, education^2, re75^2)
 - Treatment x continuous interactions (treatment * age, treatment * education, treatment * re75)
 - Treatment x quadratic interactions (treatment * age^2, treatment * education^2, treatment * re75^2)
+- Student-t likelihood to handle heavy-tailed earnings distribution
 
 Priors tightened for dollar-scale outcome with standardized confounders.
 """
@@ -54,6 +55,7 @@ def build_model(train_data: dict) -> pm.Model:
         beta_tx = pm.Normal("beta_tx", mu=0, sigma=1000, dims="cont_features")
         beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=500, dims="cont_features")
         sigma = pm.HalfNormal("sigma", sigma=3000)
+        nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         # Linear predictor
         mu = (
@@ -65,7 +67,7 @@ def build_model(train_data: dict) -> pm.Model:
             + t_data * pm.math.dot(X_sq_data, beta_tx_sq)
         )
 
-        pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
+        pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
 
