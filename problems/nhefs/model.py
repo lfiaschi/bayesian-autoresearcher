@@ -5,8 +5,9 @@ Student-t model with:
 - Student-t likelihood for robustness against outlier weight changes
   (range roughly -40 to +50 kg).
 - Confounder-dependent heteroscedasticity: log(sigma) depends on
-  smokeintensity and wt71, allowing heavier smokers and individuals with
-  different baseline weights to have more variable weight change.
+  smokeintensity, wt71, and wt71-squared, allowing heavier smokers
+  and individuals with different baseline weights to have more variable
+  weight change (with non-linear baseline-weight effect).
 
 Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
 """
@@ -18,6 +19,9 @@ import pymc as pm
 SIGMA_INDICES: list[int] = [4, 8]
 
 SIGMA_FEATURE_NAMES: list[str] = ["smokeintensity", "wt71"]
+
+# Index of wt71 for the quadratic term in the sigma model
+WT71_INDEX: int = 8
 
 
 def build_model(train_data: dict) -> pm.Model:
@@ -45,6 +49,7 @@ def build_model(train_data: dict) -> pm.Model:
 
         # --- Derived quantities for heteroscedastic sigma ---
         X_sigma = X[:, SIGMA_INDICES]              # (n_obs, 2)
+        wt71_sq = X[:, WT71_INDEX] ** 2            # quadratic wt71
 
         # --- Priors ---
         alpha = pm.Normal("alpha", mu=0, sigma=5)
@@ -57,7 +62,12 @@ def build_model(train_data: dict) -> pm.Model:
         log_sigma_coeffs = pm.Normal(
             "log_sigma_coeffs", mu=0, sigma=0.3, dims="sigma_features"
         )
-        log_sigma = log_sigma_intercept + pm.math.dot(X_sigma, log_sigma_coeffs)
+        log_sigma_wt71sq = pm.Normal("log_sigma_wt71sq", mu=0, sigma=0.2)
+        log_sigma = (
+            log_sigma_intercept
+            + pm.math.dot(X_sigma, log_sigma_coeffs)
+            + log_sigma_wt71sq * wt71_sq
+        )
         sigma = pm.math.exp(log_sigma)
 
         # --- Linear predictor ---
