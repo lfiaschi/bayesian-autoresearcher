@@ -1,24 +1,53 @@
-"""IHDP Bayesian causal model — baseline.
-Simple linear regression with treatment and confounders.
+"""IHDP Bayesian causal model — continuous-only interactions with quadratic terms.
+Treatment interactions restricted to continuous confounders (x1-x6) only,
+plus squared terms for those same confounders to capture non-linear
+confounder-outcome relationships, and treatment x quadratic confounder
+interactions for non-linear heterogeneity in treatment effects.  Binary
+confounders (x7-x25) still enter the main effects (beta_x) but do NOT get
+interaction terms, eliminating 19 noisy parameters for better regularization.
 """
 import numpy as np
 import pymc as pm
 
+N_CONTINUOUS = 6  # x1-x6 are continuous (already standardized by prepare.py)
+
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a linear Bayesian model for IHDP."""
-    coords = train_data["coords"]
+    """Build a model with continuous-only interactions and quadratic terms."""
+    coords = dict(train_data["coords"])
+    coords["cont_features"] = [f"x{i}" for i in range(1, N_CONTINUOUS + 1)]
+
+    X_raw = train_data["X"]
+    X_cont_raw = X_raw[:, :N_CONTINUOUS]
+    X_squared = X_cont_raw ** 2
 
     with pm.Model(coords=coords) as model:
-        X = pm.Data("X", train_data["X"], dims=("obs", "features"))
+        X = pm.Data("X", X_raw, dims=("obs", "features"))
+        X_cont = pm.Data("X_cont", X_cont_raw, dims=("obs", "cont_features"))
+        X_sq = pm.Data("X_sq", X_squared, dims=("obs", "cont_features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
-        alpha = pm.Normal("alpha", mu=0, sigma=10)
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
-        beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
-        sigma = pm.HalfNormal("sigma", sigma=5)
+        # Priors — tightened for standardized confounders (598 training obs)
+        alpha = pm.Normal("alpha", mu=0, sigma=3)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=2)
+        beta_x = pm.Normal("beta_x", mu=0, sigma=1, dims="features")
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.7, dims="cont_features")
+        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.5, dims="cont_features")
+        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.3, dims="cont_features")
+        sigma = pm.HalfNormal("sigma", sigma=2)
 
-        mu = alpha + beta_t * treatment + pm.math.dot(X, beta_x)
+        # Linear predictor: all 25 confounders in main effects, but only
+        # continuous confounders (x1-x6) get treatment interactions.
+        # beta_tx_sq captures non-linear heterogeneity in treatment effects
+        # via treatment x X^2 interactions.
+        mu = (
+            alpha
+            + beta_t * treatment
+            + pm.math.dot(X, beta_x)
+            + treatment * pm.math.dot(X_cont, beta_tx)
+            + pm.math.dot(X_sq, beta_sq)
+            + treatment * pm.math.dot(X_sq, beta_tx_sq)
+        )
         pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
     return model
@@ -30,9 +59,16 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
     """
     n_obs = len(new_data["outcome"])
     new_coords = {"obs": np.arange(n_obs)}
+    X_cont_new = new_data["X"][:, :N_CONTINUOUS]
+    X_squared = X_cont_new ** 2
     with model:
         pm.set_data(
-            {"X": new_data["X"], "treatment": new_data["treatment"]},
+            {
+                "X": new_data["X"],
+                "X_cont": X_cont_new,
+                "treatment": new_data["treatment"],
+                "X_sq": X_squared,
+            },
             coords=new_coords,
         )
         ppc = pm.sample_posterior_predictive(
@@ -40,35 +76,55 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
         )
 
     samples = ppc.predictions["y"].values
-    n_chains, n_draws, n_obs = samples.shape
+    n_chains, n_draws, _ = samples.shape
     return samples.reshape(n_chains * n_draws, n_obs)
 
 
 def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
-    """Estimate ATE via posterior predictive intervention."""
-    n_obs = len(train_data["outcome"])
-    train_coords = {"obs": np.arange(n_obs)}
+    """Estimate ATE using posterior samples of structural parameters.
 
-    with model:
-        pm.set_data(
-            {"X": train_data["X"], "treatment": np.ones(n_obs)},
-            coords=train_coords,
-        )
-        ppc_t1 = pm.sample_posterior_predictive(
-            idata, var_names=["y"], predictions=True
-        )
+    Under this model, the individual treatment effect for observation i is:
+        tau_i = beta_t + X_cont_i @ beta_tx + X_sq_i @ beta_tx_sq
+    Only continuous confounders (x1-x6) participate in beta_tx and beta_tx_sq
+    interactions. The main quadratic terms (beta_sq) cancel out because they
+    do not interact with treatment.
 
-    with model:
-        pm.set_data(
-            {"X": train_data["X"], "treatment": np.zeros(n_obs)},
-            coords=train_coords,
-        )
-        ppc_t0 = pm.sample_posterior_predictive(
-            idata, var_names=["y"], predictions=True
-        )
+    Falls back gracefully if idata comes from an older model without beta_tx
+    or beta_tx_sq (e.g., during runner's comparison with best.nc from a
+    previous model).
+    """
+    # Extract posterior samples: shape (n_chains, n_draws)
+    beta_t_samples = idata.posterior["beta_treatment"].values
+    n_chains, n_draws = beta_t_samples.shape
+    beta_t_flat = beta_t_samples.reshape(-1)  # (n_samples,)
 
-    y1 = ppc_t1.predictions["y"].values.reshape(-1, n_obs)
-    y0 = ppc_t0.predictions["y"].values.reshape(-1, n_obs)
-    ate_samples = (y1 - y0).mean(axis=1)
+    ate_samples = beta_t_flat.copy()
+
+    # Add linear interaction terms if present (only continuous confounders)
+    if "beta_tx" in idata.posterior:
+        beta_tx_samples = idata.posterior["beta_tx"].values
+        n_features = beta_tx_samples.shape[2]
+        beta_tx_flat = beta_tx_samples.reshape(-1, n_features)  # (n_samples, n_features)
+
+        # Use only the first n_features columns of X (continuous confounders)
+        X_cont_train = train_data["X"][:, :n_features]
+
+        # Individual treatment effects: tau_i includes beta_t + X_cont_i @ beta_tx
+        interaction_term = X_cont_train @ beta_tx_flat.T  # (n_obs, n_samples)
+        # ATE contribution = mean_i(X_cont_i @ beta_tx)
+        ate_samples = ate_samples + interaction_term.mean(axis=0)
+
+    # Add quadratic interaction terms if present (treatment x X^2)
+    if "beta_tx_sq" in idata.posterior:
+        beta_tx_sq_samples = idata.posterior["beta_tx_sq"].values
+        n_features_sq = beta_tx_sq_samples.shape[2]
+        beta_tx_sq_flat = beta_tx_sq_samples.reshape(-1, n_features_sq)  # (n_samples, n_features)
+
+        X_sq_train = train_data["X"][:, :n_features_sq] ** 2
+
+        # Individual treatment effects: tau_i includes X_sq_i @ beta_tx_sq
+        interaction_sq = X_sq_train @ beta_tx_sq_flat.T  # (n_obs, n_samples)
+        # ATE contribution = mean_i(X_sq_i @ beta_tx_sq)
+        ate_samples = ate_samples + interaction_sq.mean(axis=0)
 
     return {"ate": float(ate_samples.mean()), "ate_samples": ate_samples}

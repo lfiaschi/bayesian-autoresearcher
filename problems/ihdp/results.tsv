@@ -1,0 +1,22 @@
+commit	elpd	elpd_se	ate_hdi_width	convergence	status	descr
+539671d	-915.0703	17.7359	0.5173	pass	keep	baseline linear model
+46d7f22	-915.1464	18.1319	0.5228	pass	discard	regularizing priors + Student-t likelihood
+6f2ec98	-910.1209	16.9583	0.5637	pass	keep	treatment-confounder interactions
+ee4f9cc	-999.0	999.0	999.0	fail	crash	horseshoe interactions (1368 divergences)
+aa580cf	-999.0	999.0	999.0	fail	crash	hierarchical shrinkage interactions (r_hat=1.01 borderline)
+2fdd7a8	-911.1555	17.2835	0.5649	pass	discard	Student-t likelihood on interaction model
+f186598	-999.0	999.0	999.0	fail	crash	heteroscedastic noise (r_hat=1.01 borderline)
+8f64c9b	-887.4011	16.6418	0.5446	pass	keep	quadratic continuous confounders + interactions
+c9110f2	-999.0	999.0	999.0	fail	crash	treatment-quadratic interactions (r_hat=1.01)
+cfc611e	-999.0	999.0	999.0	fail	crash	cubic confounders (r_hat=1.01, ess=373)
+cb45922	-999.0	999.0	999.0	fail	crash	pairwise confounder interactions (r_hat=1.01)
+78b4512	-999.0	999.0	999.0	fail	crash	pairwise confounders no interactions (r_hat=1.01)
+cf20023	-886.4804	16.6153	0.5399	pass	keep	propensity score treatment interaction (doubly robust)
+n/a	-999.0	999.0	999.0	fail	crash	treatment-quadratic interactions (r_hat=1.01 again)
+299b572	-884.3370	16.5192	0.5357	pass	keep	tighten beta_tx prior to N(0,0.7)
+6379de1	-884.0524	16.5941	0.5258	pass	keep	tighten all priors (equivalent, narrower HDI)
+n/a	-999.0	999.0	999.0	fail	crash	Laplace priors on beta_x/beta_tx (r_hat=1.01 cusp geometry)
+f979fc6	-879.2162	16.5572	0.4839	pass	keep	reduce tx interactions to 6 continuous only
+df5f09e	-865.4216	16.9432	0.4673	pass	keep	treatment × quadratic interactions (6 terms)
+29377af	-999.0	999.0	999.0	fail	crash	cubic confounders (r_hat=1.01)
+da6c24e	-865.0904	16.9791	0.4574	pass	keep	remove propensity score (equivalent, narrower HDI)
