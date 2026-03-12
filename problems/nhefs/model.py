@@ -1,28 +1,17 @@
-"""NHEFS Bayesian causal model — no treatment-confounder interactions.
+"""NHEFS Bayesian causal model — linear confounders only.
 
 Student-t model with:
-- Quadratic terms for continuous confounders (age, school, smokeintensity,
-  smokeyrs, wt71) to capture non-linear confounder-outcome relationships.
+- Linear confounder effects (no quadratic terms).
 - Student-t likelihood for robustness against outlier weight changes
   (range roughly -40 to +50 kg).
 - Confounder-dependent heteroscedasticity: log(sigma) depends on
   smokeintensity and wt71, allowing heavier smokers and individuals with
   different baseline weights to have more variable weight change.
-- No treatment-confounder interactions (removed to reduce noise).
 
 Outcome is weight change in kg (wt82_71), prior scales adjusted accordingly.
 """
 import numpy as np
 import pymc as pm
-
-# Indices of continuous confounders within the confounder column order:
-# ["sex", "race", "age", "school", "smokeintensity", "smokeyrs",
-#  "exercise", "active", "wt71"]
-CONTINUOUS_INDICES: list[int] = [2, 3, 4, 5, 8]
-
-CONTINUOUS_NAMES: list[str] = [
-    "age", "school", "smokeintensity", "smokeyrs", "wt71",
-]
 
 # Indices of confounders used for heteroscedastic sigma:
 # smokeintensity (index 4) and wt71 (index 8)
@@ -32,7 +21,7 @@ SIGMA_FEATURE_NAMES: list[str] = ["smokeintensity", "wt71"]
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a Bayesian model with quadratic terms and Student-t likelihood.
+    """Build a Bayesian model with linear confounders and Student-t likelihood.
 
     Parameters
     ----------
@@ -46,7 +35,6 @@ def build_model(train_data: dict) -> pm.Model:
     """
     coords = {
         **train_data["coords"],
-        "continuous": CONTINUOUS_NAMES,
         "sigma_features": SIGMA_FEATURE_NAMES,
     }
 
@@ -55,10 +43,6 @@ def build_model(train_data: dict) -> pm.Model:
         X = pm.Data("X", train_data["X"], dims=("obs", "features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
-        # --- Derived quantities (pytensor ops inside the model) ---
-        X_cont = X[:, CONTINUOUS_INDICES]          # (n_obs, 5)
-        X_sq = X_cont ** 2                         # (n_obs, 5)
-
         # --- Derived quantities for heteroscedastic sigma ---
         X_sigma = X[:, SIGMA_INDICES]              # (n_obs, 2)
 
@@ -66,7 +50,6 @@ def build_model(train_data: dict) -> pm.Model:
         alpha = pm.Normal("alpha", mu=0, sigma=10)
         beta_t = pm.Normal("beta_treatment", mu=0, sigma=5)
         beta_x = pm.Normal("beta_x", mu=0, sigma=2, dims="features")
-        beta_x2 = pm.Normal("beta_x2", mu=0, sigma=1, dims="continuous")
         nu = pm.Gamma("nu", alpha=2, beta=0.1)
 
         # --- Confounder-dependent heteroscedastic sigma ---
@@ -78,12 +61,7 @@ def build_model(train_data: dict) -> pm.Model:
         sigma = pm.math.exp(log_sigma)
 
         # --- Linear predictor ---
-        mu = (
-            alpha
-            + beta_t * treatment
-            + pm.math.dot(X, beta_x)
-            + pm.math.dot(X_sq, beta_x2)
-        )
+        mu = alpha + beta_t * treatment + pm.math.dot(X, beta_x)
 
         # --- Likelihood (Student-t for robustness against outliers) ---
         pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
