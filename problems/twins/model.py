@@ -1,6 +1,7 @@
-"""Twins Bayesian causal model — tight priors + quadratic & cubic confounders.
+"""Twins Bayesian causal model — tight priors + quadratic, cubic & pairwise interactions.
 Linear regression with treatment, confounders, quadratic and cubic terms for
-continuous confounders (mager8, mrace, gestat10).
+continuous confounders (mager8, mrace, gestat10), plus pairwise interactions
+between the 3 continuous confounders.
 Outcome is binary mortality (0/1) with ~3% prevalence.
 Priors tightened to reflect low base rate and small effects.
 """
@@ -14,20 +15,27 @@ N_CONTINUOUS_INDICES = [2, 4, 8]
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a linear Bayesian model for Twins with tight priors, quadratic and cubic terms."""
+    """Build a linear Bayesian model for Twins with tight priors, quadratic, cubic and pairwise terms."""
     coords = dict(train_data["coords"])
     coords["cont_features"] = ["mager8", "mrace", "gestat10"]
+    coords["pair_features"] = ["mager8_x_mrace", "mager8_x_gestat10", "mrace_x_gestat10"]
 
     X_raw = train_data["X"]
     X_cont = X_raw[:, N_CONTINUOUS_INDICES]
     X_sq = X_cont ** 2
     X_cubed = X_cont ** 3
+    X_pairs = np.column_stack([
+        X_cont[:, 0] * X_cont[:, 1],
+        X_cont[:, 0] * X_cont[:, 2],
+        X_cont[:, 1] * X_cont[:, 2],
+    ])
 
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", X_raw, dims=("obs", "features"))
         X_cont_data = pm.Data("X_cont", X_cont, dims=("obs", "cont_features"))
         X_sq_data = pm.Data("X_sq", X_sq, dims=("obs", "cont_features"))
         X_cubed_data = pm.Data("X_cubed", X_cubed, dims=("obs", "cont_features"))
+        X_pairs_data = pm.Data("X_pairs", X_pairs, dims=("obs", "pair_features"))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
         alpha = pm.Normal("alpha", mu=0, sigma=0.5)
@@ -35,6 +43,7 @@ def build_model(train_data: dict) -> pm.Model:
         beta_x = pm.Normal("beta_x", mu=0, sigma=0.3, dims="features")
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.2, dims="cont_features")
         beta_cb = pm.Normal("beta_cb", mu=0, sigma=0.1, dims="cont_features")
+        beta_pair = pm.Normal("beta_pair", mu=0, sigma=0.15, dims="pair_features")
         sigma = pm.HalfNormal("sigma", sigma=0.3)
 
         mu = (
@@ -43,6 +52,7 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X, beta_x)
             + pm.math.dot(X_sq_data, beta_sq)
             + pm.math.dot(X_cubed_data, beta_cb)
+            + pm.math.dot(X_pairs_data, beta_pair)
         )
         pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
@@ -60,6 +70,11 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
     X_cont_new = X_new[:, N_CONTINUOUS_INDICES]
     X_sq_new = X_cont_new ** 2
     X_cubed_new = X_cont_new ** 3
+    X_pairs_new = np.column_stack([
+        X_cont_new[:, 0] * X_cont_new[:, 1],
+        X_cont_new[:, 0] * X_cont_new[:, 2],
+        X_cont_new[:, 1] * X_cont_new[:, 2],
+    ])
 
     with model:
         pm.set_data(
@@ -68,6 +83,7 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
                 "X_cont": X_cont_new,
                 "X_sq": X_sq_new,
                 "X_cubed": X_cubed_new,
+                "X_pairs": X_pairs_new,
                 "treatment": new_data["treatment"],
             },
             coords=new_coords,
