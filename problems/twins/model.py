@@ -1,7 +1,8 @@
-"""Twins Bayesian causal model — heteroscedastic noise + quadratic, cubic & pairwise interactions.
+"""Twins Bayesian causal model — heteroscedastic noise + quadratic, cubic & pairwise interactions + gestat10 quartic/quintic.
 Linear regression with treatment, confounders, quadratic and cubic terms for
 continuous confounders (mager8, mrace, gestat10), plus pairwise interactions
-between the 3 continuous confounders.
+between the 3 continuous confounders, plus 4th and 5th degree polynomial terms
+for gestat10 only (the dominant confounder).
 Heteroscedastic noise: separate sigma for treated and control groups.
 Outcome is binary mortality (0/1) with ~3% prevalence.
 Priors tightened to reflect low base rate and small effects.
@@ -31,12 +32,19 @@ def build_model(train_data: dict) -> pm.Model:
         X_cont[:, 1] * X_cont[:, 2],
     ])
 
+    # Higher-order polynomial terms for gestat10 only (index 2 in cont_features)
+    gestat10 = X_cont[:, 2]
+    gestat_4 = gestat10 ** 4
+    gestat_5 = gestat10 ** 5
+
     with pm.Model(coords=coords) as model:
         X = pm.Data("X", X_raw, dims=("obs", "features"))
         X_cont_data = pm.Data("X_cont", X_cont, dims=("obs", "cont_features"))
         X_sq_data = pm.Data("X_sq", X_sq, dims=("obs", "cont_features"))
         X_cubed_data = pm.Data("X_cubed", X_cubed, dims=("obs", "cont_features"))
         X_pairs_data = pm.Data("X_pairs", X_pairs, dims=("obs", "pair_features"))
+        gestat_4_data = pm.Data("gestat_4", gestat_4, dims=("obs",))
+        gestat_5_data = pm.Data("gestat_5", gestat_5, dims=("obs",))
         treatment = pm.Data("treatment", train_data["treatment"], dims="obs")
 
         alpha = pm.Normal("alpha", mu=0, sigma=0.5)
@@ -45,6 +53,8 @@ def build_model(train_data: dict) -> pm.Model:
         beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.2, dims="cont_features")
         beta_cb = pm.Normal("beta_cb", mu=0, sigma=0.1, dims="cont_features")
         beta_pair = pm.Normal("beta_pair", mu=0, sigma=0.15, dims="pair_features")
+        beta_g4 = pm.Normal("beta_g4", mu=0, sigma=0.05)
+        beta_g5 = pm.Normal("beta_g5", mu=0, sigma=0.02)
         sigma_0 = pm.HalfNormal("sigma_0", sigma=0.3)  # control group noise
         sigma_1 = pm.HalfNormal("sigma_1", sigma=0.3)  # treated group noise
         sigma = sigma_0 + (sigma_1 - sigma_0) * treatment  # vectorized selection
@@ -56,6 +66,8 @@ def build_model(train_data: dict) -> pm.Model:
             + pm.math.dot(X_sq_data, beta_sq)
             + pm.math.dot(X_cubed_data, beta_cb)
             + pm.math.dot(X_pairs_data, beta_pair)
+            + beta_g4 * gestat_4_data
+            + beta_g5 * gestat_5_data
         )
         pm.Normal("y", mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
 
@@ -78,6 +90,9 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
         X_cont_new[:, 0] * X_cont_new[:, 2],
         X_cont_new[:, 1] * X_cont_new[:, 2],
     ])
+    gestat10_new = X_cont_new[:, 2]
+    gestat_4_new = gestat10_new ** 4
+    gestat_5_new = gestat10_new ** 5
 
     with model:
         pm.set_data(
@@ -87,6 +102,8 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
                 "X_sq": X_sq_new,
                 "X_cubed": X_cubed_new,
                 "X_pairs": X_pairs_new,
+                "gestat_4": gestat_4_new,
+                "gestat_5": gestat_5_new,
                 "treatment": new_data["treatment"],
             },
             coords=new_coords,
