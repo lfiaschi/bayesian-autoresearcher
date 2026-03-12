@@ -1,9 +1,9 @@
 """LaLonde Bayesian causal model — Gamma likelihood with log link.
 
-Switches from Student-t to Gamma likelihood to better match the
-non-negative, right-skewed earnings distribution. Since some
-observations have re78=0, we shift the outcome by +1.0 so that all
-values are strictly positive (required by the Gamma support).
+Gamma GLM with log link for the non-negative, right-skewed earnings
+distribution.  Since some observations have re78=0, we shift the
+outcome by +1.0 so that all values are strictly positive (required by
+the Gamma support).
 
 The log-link GLM parameterises log(mu) as a linear function of
 covariates, which naturally ensures mu > 0 without clipping.
@@ -11,39 +11,22 @@ covariates, which naturally ensures mu > 0 without clipping.
 Features:
 - Gamma likelihood (non-negative, right-skewed)
 - Log link for the mean
-- Quadratic terms for continuous confounders
+- Linear main effects only (no quadratic terms)
 - Outcome shifted by +1 for Gamma support
 
-Simplified from previous version: removed treatment x covariate
-interactions (beta_tx, beta_tx_sq) and X_cont data container.
-With only 722 observations and a log-link, these added noise and
-widened the ATE HDI without clear benefit.
+Simplified from previous version: removed quadratic terms for
+continuous confounders.  With only 722 observations and 3 continuous
+confounders, the quadratic terms likely fit noise rather than signal.
 """
 import numpy as np
 import pymc as pm
-
-# Continuous confounder column names and their indices in the full X matrix
-CONT_FEATURE_NAMES: list[str] = ["age", "education", "re75"]
-CONT_FEATURE_INDICES: list[int] = [0, 1, 6]
 
 # Shift constant added to outcome so that zeros become positive (Gamma requires > 0)
 OUTCOME_SHIFT: float = 1.0
 
 
-def _extract_continuous(X: np.ndarray) -> np.ndarray:
-    """Extract continuous confounder columns from the full feature matrix.
-
-    Args:
-        X: Shape (n_obs, 7) — all confounders.
-
-    Returns:
-        Shape (n_obs, 3) — continuous confounders only.
-    """
-    return X[:, CONT_FEATURE_INDICES]
-
-
 def build_model(train_data: dict) -> pm.Model:
-    """Build a Gamma GLM with log link and quadratic terms.
+    """Build a Gamma GLM with log link — linear main effects only.
 
     Args:
         train_data: Dict with keys X, treatment, outcome, coords.
@@ -51,20 +34,15 @@ def build_model(train_data: dict) -> pm.Model:
     Returns:
         A compiled PyMC model.
     """
-    coords = {
-        **train_data["coords"],
-        "cont_features": CONT_FEATURE_NAMES,
-    }
+    coords = train_data["coords"]
 
     X_all = train_data["X"]
-    X_sq = _extract_continuous(X_all) ** 2
     treatment = train_data["treatment"]
     outcome_shifted = train_data["outcome"] + OUTCOME_SHIFT
 
     with pm.Model(coords=coords) as model:
         # Data containers
         X_data = pm.Data("X", X_all, dims=("obs", "features"))
-        X_sq_data = pm.Data("X_sq", X_sq, dims=("obs", "cont_features"))
         t_data = pm.Data("treatment", treatment, dims="obs")
 
         # --- Log-link linear predictor ---
@@ -76,13 +54,11 @@ def build_model(train_data: dict) -> pm.Model:
 
         # Main effects (confounders already standardised)
         beta_x = pm.Normal("beta_x", mu=0, sigma=0.5, dims="features")
-        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.3, dims="cont_features")
 
         log_mu = (
             alpha
             + beta_t * t_data
             + pm.math.dot(X_data, beta_x)
-            + pm.math.dot(X_sq_data, beta_sq)
         )
         mu = pm.math.exp(log_mu)
 
@@ -110,13 +86,11 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
         Array of shape (n_samples, n_obs).
     """
     n_obs = len(new_data["outcome"])
-    X_sq = _extract_continuous(new_data["X"]) ** 2
 
     with model:
         pm.set_data(
             {
                 "X": new_data["X"],
-                "X_sq": X_sq,
                 "treatment": new_data["treatment"],
             },
             coords={"obs": np.arange(n_obs)},
@@ -148,14 +122,12 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
         Dict with 'ate' (float) and 'ate_samples' (ndarray).
     """
     n_obs = len(train_data["outcome"])
-    X_sq = _extract_continuous(train_data["X"]) ** 2
 
     # Pass 1: predict under treatment = 1 for everyone
     with model:
         pm.set_data(
             {
                 "X": train_data["X"],
-                "X_sq": X_sq,
                 "treatment": np.ones(n_obs),
             },
             coords={"obs": np.arange(n_obs)},
@@ -169,7 +141,6 @@ def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
         pm.set_data(
             {
                 "X": train_data["X"],
-                "X_sq": X_sq,
                 "treatment": np.zeros(n_obs),
             },
             coords={"obs": np.arange(n_obs)},
