@@ -1,12 +1,19 @@
-"""LaLonde Bayesian causal model — quadratic + treatment interactions + Student-t.
+"""LaLonde Bayesian causal model — Gamma likelihood with log link.
 
-Extends baseline with:
-- Quadratic terms for continuous confounders (age^2, education^2, re75^2)
-- Treatment x continuous interactions (treatment * age, treatment * education, treatment * re75)
-- Treatment x quadratic interactions (treatment * age^2, treatment * education^2, treatment * re75^2)
-- Student-t likelihood to handle heavy-tailed earnings distribution
+Switches from Student-t to Gamma likelihood to better match the
+non-negative, right-skewed earnings distribution. Since some
+observations have re78=0, we shift the outcome by +1.0 so that all
+values are strictly positive (required by the Gamma support).
 
-Priors tightened for dollar-scale outcome with standardized confounders.
+The log-link GLM parameterises log(mu) as a linear function of
+covariates, which naturally ensures mu > 0 without clipping.
+
+Features:
+- Gamma likelihood (non-negative, right-skewed)
+- Log link for the mean
+- Quadratic terms for continuous confounders
+- Treatment x continuous interactions + treatment x quadratic interactions
+- Outcome shifted by +1 for Gamma support
 """
 import numpy as np
 import pymc as pm
@@ -14,6 +21,9 @@ import pymc as pm
 # Continuous confounder column names and their indices in the full X matrix
 CONT_FEATURE_NAMES: list[str] = ["age", "education", "re75"]
 CONT_FEATURE_INDICES: list[int] = [0, 1, 6]
+
+# Shift constant added to outcome so that zeros become positive (Gamma requires > 0)
+OUTCOME_SHIFT: float = 1.0
 
 
 def _extract_continuous(X: np.ndarray) -> np.ndarray:
@@ -29,7 +39,14 @@ def _extract_continuous(X: np.ndarray) -> np.ndarray:
 
 
 def build_model(train_data: dict) -> pm.Model:
-    """Build a linear Bayesian model with quadratic and interaction terms."""
+    """Build a Gamma GLM with log link, quadratic terms, and interactions.
+
+    Args:
+        train_data: Dict with keys X, treatment, outcome, coords.
+
+    Returns:
+        A compiled PyMC model.
+    """
     coords = {
         **train_data["coords"],
         "cont_features": CONT_FEATURE_NAMES,
@@ -39,6 +56,7 @@ def build_model(train_data: dict) -> pm.Model:
     X_cont = _extract_continuous(X_all)
     X_sq = X_cont ** 2
     treatment = train_data["treatment"]
+    outcome_shifted = train_data["outcome"] + OUTCOME_SHIFT
 
     with pm.Model(coords=coords) as model:
         # Data containers
@@ -47,18 +65,22 @@ def build_model(train_data: dict) -> pm.Model:
         X_sq_data = pm.Data("X_sq", X_sq, dims=("obs", "cont_features"))
         t_data = pm.Data("treatment", treatment, dims="obs")
 
-        # Priors
-        alpha = pm.Normal("alpha", mu=0, sigma=3000)
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=2000)
-        beta_x = pm.Normal("beta_x", mu=0, sigma=1500, dims="features")
-        beta_sq = pm.Normal("beta_sq", mu=0, sigma=1000, dims="cont_features")
-        beta_tx = pm.Normal("beta_tx", mu=0, sigma=1000, dims="cont_features")
-        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=500, dims="cont_features")
-        sigma = pm.HalfNormal("sigma", sigma=3000)
-        nu = pm.Gamma("nu", alpha=2, beta=0.1)
+        # --- Log-link linear predictor ---
+        # Intercept on log scale: log(5000) ≈ 8.5
+        alpha = pm.Normal("alpha", mu=np.log(5000), sigma=2)
 
-        # Linear predictor
-        mu = (
+        # Treatment effect on log scale
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=1)
+
+        # Main effects (confounders already standardised)
+        beta_x = pm.Normal("beta_x", mu=0, sigma=1, dims="features")
+        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.5, dims="cont_features")
+
+        # Treatment-covariate interactions
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.5, dims="cont_features")
+        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.25, dims="cont_features")
+
+        log_mu = (
             alpha
             + beta_t * t_data
             + pm.math.dot(X_data, beta_x)
@@ -66,8 +88,14 @@ def build_model(train_data: dict) -> pm.Model:
             + t_data * pm.math.dot(X_cont_data, beta_tx)
             + t_data * pm.math.dot(X_sq_data, beta_tx_sq)
         )
+        mu = pm.math.exp(log_mu)
 
-        pm.StudentT("y", nu=nu, mu=mu, sigma=sigma, observed=train_data["outcome"], dims="obs")
+        # Gamma shape parameter (higher = less variance relative to mean)
+        phi = pm.HalfNormal("phi", sigma=5)
+
+        # Gamma likelihood: mean = mu, variance = mu^2 / phi
+        # Parameterised as Gamma(alpha=phi, beta=phi/mu)
+        pm.Gamma("y", alpha=phi, beta=phi / mu, observed=outcome_shifted, dims="obs")
 
     return model
 
@@ -75,7 +103,15 @@ def build_model(train_data: dict) -> pm.Model:
 def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
     """Generate posterior predictive samples for new data.
 
-    Returns array of shape (n_samples, n_obs).
+    Predictions are returned on the original dollar scale (shift subtracted).
+
+    Args:
+        idata: InferenceData from sampling.
+        model: The compiled PyMC model.
+        new_data: Dict with keys X, treatment, outcome, coords.
+
+    Returns:
+        Array of shape (n_samples, n_obs).
     """
     n_obs = len(new_data["outcome"])
     X_cont = _extract_continuous(new_data["X"])
@@ -97,38 +133,69 @@ def predict(idata, model: pm.Model, new_data: dict) -> np.ndarray:
 
     samples = ppc.predictions["y"].values
     n_chains, n_draws, _ = samples.shape
-    return samples.reshape(n_chains * n_draws, n_obs)
+    # Subtract the shift to return predictions on the original dollar scale
+    return samples.reshape(n_chains * n_draws, n_obs) - OUTCOME_SHIFT
 
 
 def estimate_causal_effect(idata, model: pm.Model, train_data: dict) -> dict:
-    """Estimate ATE analytically from posterior samples.
+    """Estimate ATE via two posterior predictive passes (do-calculus style).
 
-    ATE = beta_t + mean(X_cont) @ beta_tx + mean(X_sq) @ beta_tx_sq.
+    Because the model uses a log link, ATE is NOT a simple coefficient.
+    Instead, we compute:
+        ATE = E[Y | do(T=1), X] - E[Y | do(T=0), X]
+    by averaging over the covariate distribution.
 
-    Uses posterior parameter samples directly — no need for two posterior
-    predictive passes. Falls back gracefully if interaction parameters are
-    absent (e.g. when called with a baseline model's idata for comparison).
+    Args:
+        idata: InferenceData from sampling.
+        model: The compiled PyMC model.
+        train_data: Dict with keys X, treatment, outcome, coords.
+
+    Returns:
+        Dict with 'ate' (float) and 'ate_samples' (ndarray).
     """
-    posterior = idata.posterior
-    beta_t_samples = posterior["beta_treatment"].values  # (chains, draws)
-    n_chains, n_draws = beta_t_samples.shape
-    n_samples = n_chains * n_draws
-    beta_t_flat = beta_t_samples.reshape(-1)  # (n_samples,)
+    n_obs = len(train_data["outcome"])
+    X_cont = _extract_continuous(train_data["X"])
+    X_sq = X_cont ** 2
 
-    ate_samples = beta_t_flat.copy()
+    # Pass 1: predict under treatment = 1 for everyone
+    with model:
+        pm.set_data(
+            {
+                "X": train_data["X"],
+                "X_cont": X_cont,
+                "X_sq": X_sq,
+                "treatment": np.ones(n_obs),
+            },
+            coords={"obs": np.arange(n_obs)},
+        )
+        ppc_t1 = pm.sample_posterior_predictive(
+            idata, var_names=["y"], predictions=True
+        )
 
-    # Add interaction contributions if present in the posterior
-    if "beta_tx" in posterior:
-        X_cont = _extract_continuous(train_data["X"])  # (n_obs, 3)
-        mean_X_cont = X_cont.mean(axis=0)  # (3,)
-        beta_tx_flat = posterior["beta_tx"].values.reshape(n_samples, -1)
-        ate_samples = ate_samples + beta_tx_flat @ mean_X_cont
+    # Pass 2: predict under treatment = 0 for everyone
+    with model:
+        pm.set_data(
+            {
+                "X": train_data["X"],
+                "X_cont": X_cont,
+                "X_sq": X_sq,
+                "treatment": np.zeros(n_obs),
+            },
+            coords={"obs": np.arange(n_obs)},
+        )
+        ppc_t0 = pm.sample_posterior_predictive(
+            idata, var_names=["y"], predictions=True
+        )
 
-    if "beta_tx_sq" in posterior:
-        X_cont = _extract_continuous(train_data["X"])
-        X_sq = X_cont ** 2
-        mean_X_sq = X_sq.mean(axis=0)  # (3,)
-        beta_tx_sq_flat = posterior["beta_tx_sq"].values.reshape(n_samples, -1)
-        ate_samples = ate_samples + beta_tx_sq_flat @ mean_X_sq
+    y1 = ppc_t1.predictions["y"].values  # (chains, draws, obs)
+    y0 = ppc_t0.predictions["y"].values
+
+    # Average over observations for each sample to get ATE per sample
+    n_chains, n_draws, _ = y1.shape
+    y1_flat = y1.reshape(n_chains * n_draws, n_obs)
+    y0_flat = y0.reshape(n_chains * n_draws, n_obs)
+
+    # ITE for each (sample, obs), then average over obs
+    ate_samples = (y1_flat - y0_flat).mean(axis=1)  # (n_samples,)
 
     return {"ate": float(ate_samples.mean()), "ate_samples": ate_samples}
