@@ -1,9 +1,10 @@
-"""Twins Bayesian causal model — heteroscedastic noise + quadratic, cubic & pairwise interactions + gestat10 quartic/quintic.
+"""Twins Bayesian causal model — confounder-dependent heteroscedasticity + quadratic, cubic & pairwise interactions + gestat10 quartic/quintic.
 Linear regression with treatment, confounders, quadratic and cubic terms for
 continuous confounders (mager8, mrace, gestat10), plus pairwise interactions
 between the 3 continuous confounders, plus 4th and 5th degree polynomial terms
 for gestat10 only (the dominant confounder).
-Heteroscedastic noise: separate sigma for treated and control groups.
+Heteroscedastic noise: log(sigma) depends on gestat10, so premature babies
+(low gestat10) can have different outcome variance than full-term babies.
 Outcome is binary mortality (0/1) with ~3% prevalence.
 Priors tightened to reflect low base rate and small effects.
 """
@@ -55,9 +56,9 @@ def build_model(train_data: dict) -> pm.Model:
         beta_pair = pm.Normal("beta_pair", mu=0, sigma=0.15, dims="pair_features")
         beta_g4 = pm.Normal("beta_g4", mu=0, sigma=0.05)
         beta_g5 = pm.Normal("beta_g5", mu=0, sigma=0.02)
-        sigma_0 = pm.HalfNormal("sigma_0", sigma=0.3)  # control group noise
-        sigma_1 = pm.HalfNormal("sigma_1", sigma=0.3)  # treated group noise
-        sigma = sigma_0 + (sigma_1 - sigma_0) * treatment  # vectorized selection
+        log_sigma_0 = pm.Normal("log_sigma_0", mu=-1.5, sigma=0.5)  # base log-sigma (exp(-1.5) ≈ 0.22)
+        log_sigma_gestat = pm.Normal("log_sigma_gestat", mu=0, sigma=0.3)  # gestat10 effect on log-sigma
+        sigma = pm.math.exp(log_sigma_0 + log_sigma_gestat * X_cont_data[:, 2])
 
         mu = (
             alpha
