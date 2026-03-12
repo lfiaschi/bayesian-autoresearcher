@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="images/banner.png" alt="Bayesian Autoresearcher" width="700">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="images/banner-light.png">
+    <img src="images/banner-light.png" alt="Bayesian Autoresearcher" width="700">
+  </picture>
 </p>
 
 <p align="center">
