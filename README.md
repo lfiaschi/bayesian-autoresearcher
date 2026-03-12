@@ -123,6 +123,28 @@ Four causal inference benchmarks with varying complexity:
 </p>
 </details>
 
+### NHEFS
+
+20 experiments, 8 kept. ELPD improved by 120 points. The **Student-t likelihood** was the key breakthrough (+88 ELPD), robustly handling outlier weight changes ranging from -40 to +50 kg. Confounder-dependent heteroscedasticity (sigma varying with smoking intensity and baseline weight) added another +31 ELPD. Simplification — removing quadratics and interactions — preserved gains while narrowing the HDI. Final ATE: 2.93 kg (literature: 3-5 kg).
+
+<p align="center">
+  <img src="problems/nhefs/causal_estimates.png" width="90%" alt="NHEFS: ATE estimates with 94% HDI across model iterations">
+</p>
+
+<details>
+<summary>ELPD optimization trajectory</summary>
+<p align="center">
+  <img src="problems/nhefs/iterations.png" width="85%" alt="NHEFS: ELPD over 20 iterations">
+</p>
+</details>
+
+<details>
+<summary>Final model architecture</summary>
+<p align="center">
+  <img src="problems/nhefs/model_diagram.png" width="85%" alt="NHEFS: final model diagram">
+</p>
+</details>
+
 ## Project structure
 
 ```
