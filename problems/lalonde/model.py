@@ -69,10 +69,10 @@ def build_model(train_data: dict) -> pm.Model:
 
         # --- Log-link linear predictor ---
         # Intercept on log scale: log(5000) ≈ 8.5
-        alpha = pm.Normal("alpha", mu=np.log(5000), sigma=2)
+        alpha = pm.Normal("alpha", mu=np.log(5000), sigma=1)
 
         # Treatment effect on log scale
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=0.3)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=0.4)
 
         # Main effects (confounders already standardised)
         beta_x = pm.Normal("beta_x", mu=0, sigma=0.5, dims="features")
