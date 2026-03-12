@@ -70,15 +70,15 @@ def build_model(train_data: dict) -> pm.Model:
         alpha = pm.Normal("alpha", mu=np.log(5000), sigma=2)
 
         # Treatment effect on log scale
-        beta_t = pm.Normal("beta_treatment", mu=0, sigma=1)
+        beta_t = pm.Normal("beta_treatment", mu=0, sigma=0.3)
 
         # Main effects (confounders already standardised)
-        beta_x = pm.Normal("beta_x", mu=0, sigma=1, dims="features")
-        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.5, dims="cont_features")
+        beta_x = pm.Normal("beta_x", mu=0, sigma=0.5, dims="features")
+        beta_sq = pm.Normal("beta_sq", mu=0, sigma=0.3, dims="cont_features")
 
         # Treatment-covariate interactions
-        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.5, dims="cont_features")
-        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.25, dims="cont_features")
+        beta_tx = pm.Normal("beta_tx", mu=0, sigma=0.2, dims="cont_features")
+        beta_tx_sq = pm.Normal("beta_tx_sq", mu=0, sigma=0.1, dims="cont_features")
 
         log_mu = (
             alpha
