@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/banner.png" alt="Bayesian Autoresearcher" width="600">
+  <img src="images/banner.png" alt="Bayesian Autoresearcher" width="700">
 </p>
 
 <p align="center">
@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/PyMC-5.10+-003E6C?style=flat-square" alt="PyMC">
-  <img src="https://img.shields.io/badge/Sampler-nutpie-4B0082?style=flat-square" alt="nutpie">
-  <img src="https://img.shields.io/badge/Agent-Claude_Code-D97706?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Code">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://www.pymc.io/"><img src="https://img.shields.io/badge/PyMC-5.10+-003E6C?style=flat-square" alt="PyMC"></a>
+  <a href="https://github.com/pymc-devs/nutpie"><img src="https://img.shields.io/badge/Sampler-nutpie-4B0082?style=flat-square" alt="nutpie"></a>
+  <a href="https://docs.anthropic.com/en/docs/claude-code"><img src="https://img.shields.io/badge/Agent-Claude_Code-D97706?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Code"></a>
 </p>
 
 ---
